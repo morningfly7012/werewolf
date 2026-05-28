@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>玩家 · 狼人殺</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="wrap center">
+    <div class="title-row">
+      <span class="logo">🐺</span>
+      <h1 id="hdr">加入遊戲</h1>
+    </div>
+    <div class="pill" id="meInfo" style="display:none"></div>
+    <div id="panel"></div>
+  </div>
+
+  <script type="module">
+    import { toast, el, REASON_TEXT } from '/js/ui.js';
+
+    const socket = io();
+    const panel = document.getElementById('panel');
+    const meInfo = document.getElementById('meInfo');
+
+    let myCode = sessionStorage.getItem('ww_pcode') || new URLSearchParams(location.search).get('code') || '';
+    let myName = sessionStorage.getItem('ww_pname') || '';
+    let mySeat = null, myRole = null;
+
+    function show(node) { panel.innerHTML = ''; panel.appendChild(node); }
+    function card(children) { return el('div', { class: 'card' }, children); }
+    function btn(text, cls, onclick) { return el('button', { class: cls || '', text, onclick }); }
+
+    function renderJoin() {
+      document.getElementById('hdr').textContent = '加入遊戲';
+      const c = card([]);
+      c.appendChild(el('label', { text: '房間號碼' }));
+      const codeIn = el('input', { value: myCode, placeholder: '輸入 4 位房號', inputmode: 'numeric', maxlength: '4' });
+      c.appendChild(codeIn);
+      c.appendChild(el('label', { text: '你的暱稱' }));
+      const nameIn = el('input', { value: myName, placeholder: '輸入名字' });
+      c.appendChild(nameIn);
+      c.appendChild(el('div', { class: 'spacer' }));
+      c.appendChild(btn('加入房間', '', () => {
+        const code = codeIn.value.trim(); const name = nameIn.value.trim() || '玩家';
+        if (!/^\d{4}$/.test(code)) return toast('請輸入 4 位數房號', true);
+        socket.emit('player:join', { code, name }, (res) => {
+          if (!res.ok) return toast(res.error, true);
+          myCode = code; myName = name;
+          sessionStorage.setItem('ww_pcode', code);
+          sessionStorage.setItem('ww_pname', name);
+          renderLobby(res.total);
+        });
+      }));
+      show(c);
+    }
+
+    function renderLobby(total) {
+      document.getElementById('hdr').textContent = '等待開始';
+      meInfo.style.display = 'inline-flex';
+      meInfo.textContent = `房號 ${myCode} · ${myName}`;
+      const c = card([
+        el('div', { class: 'banner', text: '✅ 已加入房間！' }),
+        el('p', { class: 'muted', text: '請等待房主開始遊戲。保持此頁面開啟，稍後會引導你抽號碼與查看角色。' })
+      ]);
+      show(c);
+    }
+
+    // ── 抽號碼 ──
+    function renderDraw() {
+      document.getElementById('hdr').textContent = '抽號碼';
+      const c = card([
+        el('p', { class: 'muted', text: '輪到抽號碼囉！點下方按鈕抽取你的座位號碼。' }),
+        btn('🎲 抽號碼', '', () => {
+          socket.emit('player:drawNumber', {}, (res) => {
+            if (!res.ok) return toast(res.error, true);
+            mySeat = res.seat;
+            renderMySeat();
+          });
+        })
+      ]);
+      show(c);
+    }
+    function renderMySeat() {
+      meInfo.style.display = 'inline-flex';
+      meInfo.textContent = `房號 ${myCode} · ${myName}`;
+      show(card([
+        el('div', { class: 'banner day', html: `你的號碼是 <b style="font-size:40px">${mySeat}</b> 號` }),
+        el('p', { class: 'muted', text: '請記住你的號碼，等待房主發角色。' })
+      ]));
+    }
+
+    // ── 看角色 ──
+    function renderReveal() {
+      document.getElementById('hdr').textContent = '查看角色';
+      const c = card([
+        el('p', { class: 'muted', text: `你是 ${mySeat} 號。點擊下方查看你的角色（請勿給他人看到）。` }),
+        btn('🃏 翻牌看角色', '', () => {
+          socket.emit('player:reveal', {}, (res) => {
+            if (!res.ok) return toast(res.error, true);
+            myRole = res;
+            showRoleCard(res);
+          });
+        })
+      ]);
+      show(c);
+    }
+    function showRoleCard(r) {
+      const c = el('div', {});
+      const rc = el('div', { class: 'role-card ' + r.camp });
+      rc.appendChild(el('div', { class: 'role-emoji', text: r.emoji }));
+      rc.appendChild(el('div', { class: 'role-name', text: r.name }));
+      rc.appendChild(el('div', { class: 'muted', text: r.desc }));
+      c.appendChild(rc);
+      if (r.teammates) {
+        c.appendChild(el('div', { class: 'banner', style: 'margin-top:12px', html: '🐺 你的狼隊友：' + r.teammates.map((t) => `${t.seat}號`).join('、') }));
+      }
+      c.appendChild(el('p', { class: 'muted small', style: 'text-align:center', text: '記住角色後可收起手機，等待天黑。' }));
+      const hideBtn = btn('我記住了，收起', 'secondary', () => renderWaitNight());
+      c.appendChild(hideBtn);
+      show(c);
+    }
+
+    function renderWaitNight() {
+      document.getElementById('hdr').textContent = `${mySeat}號 · ${myRole ? myRole.name : ''}`;
+      show(card([el('div', { class: 'banner night', text: '🌙 請看主畫面，等待輪到你行動。' })]));
+    }
+
+    // ── 夜晚行動 ──
+    function seatButtons(targets, { allowNull, nullLabel, onPick }) {
+      const grid = el('div', { class: 'seat-grid' });
+      let sel = null;
+      function paint() {
+        grid.innerHTML = '';
+        for (const t of targets) {
+          const d = el('div', { class: 'seat' + (sel === t.seat ? ' sel' : '') });
+          d.appendChild(el('div', { class: 'num', text: String(t.seat) }));
+          d.appendChild(el('div', { class: 'nm', text: t.name || '' }));
+          d.style.cursor = 'pointer';
+          d.onclick = () => { sel = t.seat; paint(); onPick && onPick(sel); };
+          grid.appendChild(d);
+        }
+      }
+      paint();
+      const box = el('div', {}, [grid]);
+      if (allowNull) box.appendChild(btn(nullLabel || '不選擇', 'ghost sm', () => { sel = null; paint(); onPick && onPick(null); }));
+      box.get = () => sel;
+      return box;
+    }
+
+    socket.on('night:yourTurn', (data) => {
+      document.getElementById('hdr').textContent = `${mySeat}號 · 你的行動`;
+      if (data.key === 'guard') {
+        const picker = seatButtons(data.targets, { allowNull: true, nullLabel: '空守（不守任何人）' });
+        show(card([
+          el('h2', { text: '🛡️ 守衛行動' }),
+          el('p', { class: 'muted', text: '選擇要守護的玩家（不能連守同一人）。' }),
+          picker,
+          btn('確認', '', () => socket.emit('action:guard', { target: picker.get() }, (r) => r.ok ? doneWait('已守護') : toast(r.error, true)))
+        ]));
+      } else if (data.key === 'wolf') {
+        const mates = (data.teammates || []).map((t) => `${t.seat}號${t.alive ? '' : '(死)'}`).join('、');
+        const picker = seatButtons(data.targets, { allowNull: true, nullLabel: '空刀（不殺人）' });
+        const votesBox = el('div', { class: 'small muted', style: 'margin:8px 0' });
+        const c = card([
+          el('h2', { text: '🐺 狼人行動' }),
+          el('p', { class: 'muted', html: `狼隊友：<b>${mates}</b>，請商議擊殺目標。` }),
+          picker, votesBox,
+          btn('確認擊殺目標', 'danger', () => socket.emit('action:wolf', { target: picker.get() }, (r) => r.ok ? toast('已送出，可繼續與隊友調整') : toast(r.error, true)))
+        ]);
+        c._votesBox = votesBox;
+        show(c);
+        window._wolfVotesBox = votesBox;
+      } else if (data.key === 'witch') {
+        const c = el('div', {});
+        const head = card([
+          el('h2', { text: '🧪 女巫行動' }),
+          el('div', { class: 'banner', html: data.killed != null ? `今晚 <b>${data.killed}號</b> 被狼人擊殺` : '今晚無人被狼人擊殺' })
+        ]);
+        c.appendChild(head);
+        let saveChosen = false, poisonTarget = null;
+        const body = card([]);
+        if (data.antidote && data.killed != null) {
+          const sb = btn('💊 使用解藥救 ' + data.killed + '號', 'good', () => {
+            socket.emit('action:witch', { save: true }, (r) => {
+              if (!r.ok) return toast(r.error, true); // 防呆：第一晚自救
+              saveChosen = true; sb.disabled = true; sb.textContent = '✓ 已使用解藥';
+              toast('已使用解藥');
+            });
+          });
+          body.appendChild(sb);
+        } else if (!data.antidote) body.appendChild(el('p', { class: 'muted small', text: '解藥已用完' }));
+        if (data.poison) {
+          body.appendChild(el('label', { text: '☠️ 使用毒藥（可不用）' }));
+          const picker = seatButtons(data.targets.filter((t) => t.seat !== mySeat), { allowNull: true, nullLabel: '不使用毒藥', onPick: (s) => poisonTarget = s });
+          body.appendChild(picker);
+        } else body.appendChild(el('p', { class: 'muted small', text: '毒藥已用完' }));
+        body.appendChild(btn('確認女巫行動', '', () => {
+          const payload = { save: saveChosen };
+          if (poisonTarget != null) payload.poison = poisonTarget;
+          socket.emit('action:witch', payload, (r) => r.ok ? doneWait('女巫行動完成') : toast(r.error, true));
+        }));
+        c.appendChild(body);
+        show(c);
+      } else if (data.key === 'seer') {
+        const resultBox = el('div', { class: 'banner', style: 'display:none' });
+        const picker = seatButtons(data.targets.filter((t) => t.seat !== mySeat), {
+          onPick: (s) => {
+            if (s == null) return;
+            socket.emit('action:seer', { target: s }, (r) => {
+              if (!r.ok) return toast(r.error, true);
+              resultBox.style.display = 'block';
+              resultBox.className = 'banner ' + (r.result === 'wolf' ? 'wolf-win' : 'good-win');
+              resultBox.textContent = `${s}號 是 ${r.result === 'wolf' ? '🐺 狼人' : '✅ 好人'}`;
+            });
+          }
+        });
+        show(card([
+          el('h2', { text: '🔮 預言家行動' }),
+          el('p', { class: 'muted', text: '選擇要查驗的玩家。' }),
+          picker, resultBox,
+          btn('完成查驗', 'secondary', () => doneWait('查驗完成'))
+        ]));
+      }
+    });
+
+    socket.on('wolf:votes', ({ votes }) => {
+      if (window._wolfVotesBox) {
+        window._wolfVotesBox.innerHTML = '隊友目前選擇：' + votes.map((v) => `${v.seat}號→${v.target ? v.target + '號' : '空刀'}`).join('，');
+      }
+    });
+
+    socket.on('night:wait', () => {
+      document.getElementById('hdr').textContent = `${mySeat}號`;
+      show(card([el('div', { class: 'banner night', text: '🌙 請閉眼等待，輪到你時會通知。' })]));
+    });
+
+    function doneWait(msg) {
+      toast(msg);
+      show(card([el('div', { class: 'banner night', text: '✓ ' + msg + '，請等待。' })]));
+    }
+
+    // ── 階段事件 ──
+    socket.on('phase:draw', renderDraw);
+    socket.on('phase:deal', renderReveal);
+    socket.on('day:announce', ({ deaths }) => {
+      const txt = deaths.length ? '昨晚死亡：' + deaths.map((d) => `${d.seat}號`).join('、') : '昨晚平安夜';
+      show(card([el('div', { class: 'banner day', text: '☀️ ' + txt }), el('p', { class: 'muted', text: '請看主畫面進行討論與投票。' })]));
+    });
+    socket.on('game:over', ({ winner }) => {
+      show(card([el('div', { class: 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win'), text: winner === 'wolf' ? '🐺 狼人勝利' : '✅ 好人勝利' })]));
+    });
+
+    socket.on('state', (s) => {
+      // 依公開狀態同步基本畫面（重連用）
+      if (s.phase === 'gameOver') return;
+    });
+
+    socket.on('connect', () => {
+      if (myCode && myName && mySeat == null) {
+        // 嘗試重新加入大廳（僅 lobby 階段有效）
+        socket.emit('player:join', { code: myCode, name: myName }, (res) => {
+          if (res.ok) renderLobby(res.total);
+          else renderJoin();
+        });
+      }
+    });
+
+    // 初始畫面
+    if (myCode) {
+      socket.emit('player:join', { code: myCode, name: myName || '玩家' }, (res) => {
+        if (res.ok) { sessionStorage.setItem('ww_pcode', myCode); renderLobby(res.total); }
+        else renderJoin();
+      });
+    } else {
+      renderJoin();
+    }
+  </script>
+</body>
+</html>

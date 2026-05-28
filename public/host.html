@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>房主主畫面 · 狼人殺</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="title-row">
+      <span class="logo">🐺</span>
+      <h1>遊玩模式 · 主畫面</h1>
+      <button class="ghost sm" id="voiceToggle" style="margin-left:auto;width:auto">🔊 語音</button>
+    </div>
+    <div class="banner" id="phaseBanner">建立房間中…</div>
+    <div class="step-indicator" id="stepDots"></div>
+    <div id="panel"></div>
+
+    <div class="card">
+      <h3>場上玩家</h3>
+      <div class="seat-grid" id="boardSeats"></div>
+    </div>
+    <button class="ghost" onclick="if(confirm('確定離開？房間將失效。'))location.href='/'">← 結束並回首頁</button>
+  </div>
+
+  <script type="module">
+    import { speak, setVoiceEnabled, isVoiceEnabled, warmup } from '/js/voice.js';
+    import { toast, el, renderSeats } from '/js/ui.js';
+
+    const socket = io();
+    const panel = document.getElementById('panel');
+    const phaseBanner = document.getElementById('phaseBanner');
+    const stepDots = document.getElementById('stepDots');
+
+    const config = JSON.parse(sessionStorage.getItem('ww_config') || 'null');
+    const options = JSON.parse(sessionStorage.getItem('ww_options') || '{}');
+    let code = sessionStorage.getItem('ww_hostcode') || null;
+    let total = 0;
+    let state = null;
+    let nightTotalSteps = 0;
+
+    const vbtn = document.getElementById('voiceToggle');
+    function refreshVoiceBtn() { vbtn.textContent = isVoiceEnabled() ? '🔊 語音開' : '🔇 語音關'; }
+    vbtn.onclick = () => { setVoiceEnabled(!isVoiceEnabled()); refreshVoiceBtn(); if (isVoiceEnabled()) warmup(); };
+    refreshVoiceBtn();
+
+    function show(node) { panel.innerHTML = ''; panel.appendChild(node); }
+    function card(children) { return el('div', { class: 'card' }, children); }
+    function btn(text, cls, onclick) { return el('button', { class: cls || '', text, onclick }); }
+
+    function renderBoard() {
+      if (state) renderSeats(document.getElementById('boardSeats'), state.players, {});
+    }
+
+    function setDots(active) {
+      stepDots.innerHTML = '';
+      for (let i = 0; i < nightTotalSteps; i++) {
+        stepDots.appendChild(el('div', { class: 'step-dot' + (i < active ? ' done' : i === active ? ' active' : '') }));
+      }
+    }
+
+    // ── 建立 / 重連房間 ──
+    function createOrRejoin() {
+      if (!config) { location.href = '/'; return; }
+      if (code) {
+        socket.emit('host:rejoin', { code }, (res) => {
+          if (res.ok) { total = res.total; renderLobby(); }
+          else { code = null; sessionStorage.removeItem('ww_hostcode'); doCreate(); }
+        });
+      } else doCreate();
+    }
+    function doCreate() {
+      socket.emit('host:create', { config, options }, (res) => {
+        if (!res.ok) { alert('建立失敗：' + (res.errors || []).join(' ')); location.href = '/'; return; }
+        code = res.code; total = res.total;
+        sessionStorage.setItem('ww_hostcode', code);
+        renderLobby();
+      });
+    }
+
+    function joinUrl() { return location.origin + '/player.html?code=' + code; }
+
+    let lobbyInfo = { joined: 0, names: [] };
+    function renderLobby() {
+      phaseBanner.className = 'banner';
+      phaseBanner.textContent = '等待玩家加入';
+      const url = joinUrl();
+      const c = card([
+        el('p', { class: 'muted', text: '請玩家用手機開啟以下網址，或輸入房號加入：' }),
+        el('div', { class: 'code-big', text: code }),
+        el('div', { class: 'pill', style: 'display:block;text-align:center', html: `加入網址：<a href="${url}">${url}</a>` }),
+        el('div', { id: 'qrBox', style: 'text-align:center;margin:12px 0' }),
+        el('div', { class: 'banner', id: 'lobbyCount', text: `已加入 0 / ${total} 人` }),
+        el('div', { class: 'muted small', id: 'lobbyNames', style: 'text-align:center' })
+      ]);
+      const startBtn = btn(`開始遊戲（抽號碼）`, '', () => {
+        socket.emit('host:startDraw', {}, (res) => { if (!res.ok) toast(res.error, true); });
+      });
+      startBtn.id = 'startBtn';
+      c.appendChild(startBtn);
+      show(c);
+      drawQR(url);
+      updateLobby();
+    }
+    function drawQR(url) {
+      // 用 Google Chart 失效風險，改用簡易 QR：以 api 服務（需網路）；無網路時略過
+      const box = document.getElementById('qrBox');
+      if (!box) return;
+      const img = el('img', { src: 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(url), width: '180', height: '180', style: 'border-radius:10px;background:#fff;padding:6px' });
+      img.onerror = () => { box.innerHTML = '<span class="muted small">（QR 圖無法載入，請以房號加入）</span>'; };
+      box.appendChild(img);
+    }
+    function updateLobby() {
+      const lc = document.getElementById('lobbyCount');
+      const ln = document.getElementById('lobbyNames');
+      const sb = document.getElementById('startBtn');
+      if (lc) lc.textContent = `已加入 ${lobbyInfo.joined} / ${total} 人`;
+      if (ln) ln.textContent = lobbyInfo.names.join('、');
+      if (sb) { sb.disabled = lobbyInfo.joined < total; sb.textContent = lobbyInfo.joined < total ? `還需 ${total - lobbyInfo.joined} 人` : '✅ 人到齊，開始抽號碼'; }
+    }
+
+    socket.on('lobby', (info) => { lobbyInfo = info; updateLobby(); });
+
+    // ── 抽號碼階段 ──
+    socket.on('phase:draw', () => {
+      phaseBanner.className = 'banner';
+      phaseBanner.textContent = '抽號碼中…';
+      speak('請各位玩家在手機上抽取自己的號碼。');
+      show(card([
+        el('h2', { text: '🎲 抽號碼' }),
+        el('p', { class: 'muted', text: '請玩家在手機上點「抽號碼」。' }),
+        el('div', { class: 'banner', id: 'drawCount', text: `已抽 0 / ${total}` }),
+        (() => { const b = btn('全部抽完，發角色', '', () => socket.emit('host:deal', {}, (r) => { if (!r.ok) toast(r.error, true); })); b.id = 'dealBtn'; b.disabled = true; return b; })()
+      ]));
+    });
+    socket.on('draw:progress', ({ drawn }) => {
+      const dc = document.getElementById('drawCount');
+      if (dc) dc.textContent = `已抽 ${drawn} / ${total}`;
+      const db = document.getElementById('dealBtn');
+      if (db) db.disabled = drawn < total;
+    });
+
+    // ── 發角色階段 ──
+    socket.on('phase:deal', () => {
+      phaseBanner.className = 'banner';
+      phaseBanner.textContent = '發角色中…';
+      speak('角色已發出，請各位玩家在手機上查看自己的角色。');
+      show(card([
+        el('h2', { text: '🃏 查看角色' }),
+        el('p', { class: 'muted', text: '請玩家在手機上翻牌查看角色（請勿給他人看到）。確認大家都看完後開始第一夜。' }),
+        btn('🌙 開始第一夜', '', () => socket.emit('host:startNight', {}, (r) => { if (!r.ok) toast(r.error, true); }))
+      ]));
+    });
+
+    // ── 夜晚 ──
+    const STEP_TIPS = {
+      guard: '守衛正在手機上選擇守護對象。', wolf: '狼人正在手機上商議擊殺目標。',
+      witch: '女巫正在手機上決定用藥。', seer: '預言家正在手機上查驗。'
+    };
+    socket.on('night:step', ({ index, total: tot, key, voice, label }) => {
+      nightTotalSteps = tot;
+      phaseBanner.className = 'banner night';
+      phaseBanner.textContent = `🌙 第 ${state ? state.day : ''} 夜`;
+      setDots(index);
+      speak(voice);
+      const c = card([
+        el('h2', { text: label }),
+        el('p', { class: 'muted', text: STEP_TIPS[key] || '' }),
+        el('div', { class: 'muted small', text: '※ 此畫面為公開主畫面，不會顯示任何祕密資訊。' }),
+        btn('下一步 →', '', () => socket.emit('host:nextStep', {}, (r) => {}))
+      ]);
+      show(c);
+    });
+    socket.on('night:allDone', () => {
+      setDots(nightTotalSteps);
+      phaseBanner.className = 'banner night';
+      show(card([
+        el('h2', { text: '🌙 夜晚結束' }),
+        el('p', { class: 'muted', text: '所有夜晚行動已完成，結算今晚結果。' }),
+        btn('☀️ 天亮結算', '', () => socket.emit('host:resolveNight', {}, (r) => {}))
+      ]));
+    });
+
+    // ── 白天 ──
+    socket.on('day:announce', ({ day, deaths, pendingGun }) => {
+      phaseBanner.className = 'banner day';
+      phaseBanner.textContent = `☀️ 第 ${day} 天 · 天亮了`;
+      renderBoard();
+      const txt = deaths.length ? '昨晚死亡：' + deaths.map((d) => `${d.seat}號`).join('、') : '昨晚是平安夜，沒有人死亡';
+      speak('天亮了。' + txt + '。');
+      const c = card([
+        el('h2', { text: '☀️ 天亮了' }),
+        el('div', { class: 'banner ' + (deaths.length ? 'wolf-win' : 'good-win'), text: txt })
+      ]);
+      show(c);
+      if (pendingGun) renderGun(pendingGun, c);
+      else c.appendChild(btn('💬 進入發言討論', '', renderDiscuss));
+    });
+
+    function renderGun(pg, container) {
+      const roleName = pg.roleId === 'wolfking' ? '狼王' : '獵人';
+      speak(`${pg.seat}號 ${roleName} 出局，可以開槍帶走一人。`);
+      const box = card([ el('h3', { text: `🔫 ${pg.seat}號（${roleName}）開槍` }) ]);
+      const picker = pickerEl({ allowNull: true, nullLabel: '不開槍', exclude: [pg.seat] });
+      box.appendChild(picker);
+      box.appendChild(btn('確認開槍', 'danger', () => {
+        socket.emit('host:shoot', { shooter: pg.seat, target: picker.get() }, (r) => { if (!r.ok) toast(r.error, true); });
+      }));
+      container.appendChild(box);
+    }
+    socket.on('day:shoot', ({ shooter, target, pendingGun }) => {
+      renderBoard();
+      if (target) { toast(`${shooter}號 開槍帶走 ${target}號`); speak(`${shooter}號 開槍帶走 ${target}號。`); }
+      const c = card([ el('h2', { text: '開槍結果' }), el('div', { class: 'banner', text: target ? `${shooter}號 帶走 ${target}號` : `${shooter}號 選擇不開槍` }) ]);
+      show(c);
+      if (pendingGun) renderGun(pendingGun, c);
+      else if (state && state.phase !== 'gameOver') {
+        // 視前一階段決定下一步：若在白天投票後則進下一夜，否則進討論
+        c.appendChild(btn(afterGunNext.label, '', afterGunNext.fn));
+      }
+    });
+    let afterGunNext = { label: '💬 進入發言討論', fn: () => renderDiscuss() };
+
+    function renderDiscuss() {
+      afterGunNext = { label: '💬 進入發言討論', fn: () => renderDiscuss() };
+      phaseBanner.className = 'banner day';
+      speak('請存活玩家依序發言。');
+      const c = card([
+        el('h2', { text: '💬 發言討論' }),
+        el('p', { class: 'muted', text: '請玩家依號碼順序發言，討論後進入投票。' }),
+        timerWidget(),
+        btn('🗳️ 進入投票', '', () => socket.emit('host:startVote', {}, () => {}))
+      ]);
+      show(c);
+    }
+
+    function timerWidget() {
+      const box = el('div', { class: 'card', style: 'background:var(--bg2)' });
+      let sec = 60, timer = null;
+      const disp = el('div', { class: 'val', style: 'font-size:32px;text-align:center', text: '60 秒' });
+      const row = el('div', { class: 'row' });
+      row.append(
+        btn('開始 60 秒', 'sm secondary', () => { clearInterval(timer); sec = 60; disp.textContent = '60 秒'; timer = setInterval(() => { sec--; disp.textContent = sec + ' 秒'; if (sec <= 0) { clearInterval(timer); speak('時間到。'); disp.textContent = '時間到'; } }, 1000); }),
+        btn('停止', 'sm ghost', () => clearInterval(timer))
+      );
+      box.append(disp, row);
+      return box;
+    }
+
+    socket.on('phase:vote', () => {
+      afterGunNext = { label: '🌙 進入下一夜', fn: () => socket.emit('host:startNight', {}, () => {}) };
+      phaseBanner.className = 'banner day';
+      phaseBanner.textContent = `🗳️ 第 ${state.day} 天 · 投票`;
+      speak('請開始投票。');
+      const picker = pickerEl({ allowNull: true, nullLabel: '平票 / 無人出局' });
+      const c = card([
+        el('h2', { text: '🗳️ 投票出局' }),
+        el('p', { class: 'muted', text: '請房主依現場票數，選出被投出的玩家。' }),
+        picker,
+        btn('確認出局結果', 'danger', () => socket.emit('host:execute', { seat: picker.get() }, (r) => { if (!r.ok) toast(r.error, true); }))
+      ]);
+      show(c);
+    });
+
+    socket.on('day:execute', ({ seat, idiot, pendingGun }) => {
+      renderBoard();
+      let msg;
+      if (seat == null) msg = '本輪無人出局';
+      else if (idiot) msg = `${seat}號 是白痴，翻牌不死，失去投票權`;
+      else msg = `${seat}號 被投票出局`;
+      speak(msg + '。');
+      const c = card([ el('h2', { text: '投票結果' }), el('div', { class: 'banner ' + (idiot ? 'day' : 'wolf-win'), text: msg }) ]);
+      show(c);
+      if (pendingGun) renderGun(pendingGun, c);
+      else c.appendChild(btn('🌙 進入下一夜', '', () => socket.emit('host:startNight', {}, () => {})));
+    });
+
+    socket.on('game:over', ({ winner }) => {
+      phaseBanner.className = 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win');
+      phaseBanner.textContent = winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！';
+      speak(winner === 'wolf' ? '遊戲結束，狼人陣營勝利。' : '遊戲結束，好人陣營勝利。');
+      show(card([
+        el('h2', { text: '🎉 遊戲結束' }),
+        el('div', { class: 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win'), text: winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！' }),
+        btn('⚙️ 回首頁開新局', '', () => { sessionStorage.removeItem('ww_hostcode'); location.href = '/'; })
+      ]));
+    });
+
+    // 選人元件（host 用，從 state 取存活玩家）
+    function pickerEl({ allowNull, nullLabel, exclude = [] }) {
+      const grid = el('div', { class: 'seat-grid' });
+      let sel = null;
+      const targets = (state ? state.players : []).filter((p) => p.alive && !exclude.includes(p.seat));
+      function paint() {
+        grid.innerHTML = '';
+        for (const t of targets) {
+          const d = el('div', { class: 'seat' + (sel === t.seat ? ' sel' : '') });
+          d.appendChild(el('div', { class: 'num', text: String(t.seat) }));
+          d.appendChild(el('div', { class: 'nm', text: t.name || '' }));
+          d.style.cursor = 'pointer';
+          d.onclick = () => { sel = t.seat; paint(); };
+          grid.appendChild(d);
+        }
+      }
+      paint();
+      const box = el('div', {}, [grid]);
+      if (allowNull) box.appendChild(btn(nullLabel || '不選擇', 'ghost sm', () => { sel = null; paint(); }));
+      box.get = () => sel;
+      return box;
+    }
+
+    socket.on('state', (s) => { state = s; renderBoard(); });
+    socket.on('connect', () => createOrRejoin());
+  </script>
+</body>
+</html>
