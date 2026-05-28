@@ -31,6 +31,9 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          # 若儲存庫尚未啟用 Pages，嘗試自動啟用（需 pages: write 權限）
+          enablement: true
 
       - name: Upload static site (public/)
         uses: actions/upload-pages-artifact@v3
