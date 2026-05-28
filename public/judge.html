@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>法官模式 · 狼人殺輔助器</title>
-  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
   <div class="wrap">
@@ -32,18 +32,18 @@
         <div class="log" id="historyLog"></div>
       </details>
     </div>
-    <button class="ghost" onclick="location.href='/'">← 回首頁重新設定</button>
+    <button class="ghost" onclick="location.href='index.html'">← 回首頁重新設定</button>
   </div>
 
   <script type="module">
-    import { Game } from '/shared/engine.js';
-    import { ROLES, isWolf } from '/shared/roles.js';
-    import { speak, setVoiceEnabled, isVoiceEnabled, warmup } from '/js/voice.js';
-    import { toast, el, renderSeats, REASON_TEXT } from '/js/ui.js';
+    import { Game } from './shared/engine.js';
+    import { ROLES, isWolf } from './shared/roles.js';
+    import { speak, setVoiceEnabled, isVoiceEnabled, warmup } from './js/voice.js';
+    import { toast, el, renderSeats, REASON_TEXT } from './js/ui.js';
 
     const config = JSON.parse(sessionStorage.getItem('ww_config') || 'null');
     const options = JSON.parse(sessionStorage.getItem('ww_options') || '{}');
-    if (!config) { location.href = '/'; }
+    if (!config) { location.href = 'index.html'; }
 
     const game = new Game(config, options);
     const N = game.totalSeats;
@@ -376,7 +376,7 @@
       }).join(' ') }));
       c.appendChild(el('div', { class: 'spacer' }));
       c.appendChild(btn('🔄 再玩一局（相同設定）', '', () => location.reload()));
-      c.appendChild(btn('⚙️ 回首頁重新設定', 'secondary', () => location.href = '/'));
+      c.appendChild(btn('⚙️ 回首頁重新設定', 'secondary', () => location.href = 'index.html'));
       panel.appendChild(c);
       renderBoard();
     }
