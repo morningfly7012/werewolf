@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>狼人殺輔助器</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <div class="wrap center">
+    <div class="title-row">
+      <span class="logo">🐺</span>
+      <h1>狼人殺輔助器</h1>
+    </div>
+    <p class="muted small">線下狼人殺的好幫手 · 支援 8～16 人 · 語音引導 · 防呆機制</p>
+
+    <!-- 步驟 1：人數 -->
+    <div class="card">
+      <h2>① 遊玩人數</h2>
+      <div class="stepper">
+        <button class="secondary" id="cntMinus">−</button>
+        <div class="val"><span id="cntVal">9</span> 人</div>
+        <button class="secondary" id="cntPlus">＋</button>
+      </div>
+      <p class="muted small">最少 8 人、最多 16 人。</p>
+    </div>
+
+    <!-- 步驟 2：角色配置 -->
+    <div class="card">
+      <h2>② 角色配置</h2>
+      <p class="muted small">系統已套用推薦板子，可自行增減。</p>
+      <div id="roleList"></div>
+      <div class="spacer"></div>
+      <div class="banner" id="cfgStatus"></div>
+      <button class="ghost sm" id="resetPreset" style="width:auto">↺ 套用推薦板子</button>
+    </div>
+
+    <!-- 步驟 3：規則選項 -->
+    <div class="card">
+      <h2>③ 規則選項（防呆）</h2>
+      <label>勝利條件</label>
+      <select id="optWin">
+        <option value="edge">屠邊（神全滅 或 民全滅，狼即勝）</option>
+        <option value="all">屠城（好人全部出局，狼才勝）</option>
+      </select>
+      <label>女巫自救規則</label>
+      <select id="optSelfSave">
+        <option value="firstNightNo">第一晚不能自救（常見規則）</option>
+        <option value="never">全程不能自救</option>
+        <option value="always">皆可自救</option>
+      </select>
+      <div class="checkbox-row">
+        <input type="checkbox" id="optDouble" />
+        <label for="optDouble" style="margin:0">允許女巫同一晚同時使用解藥與毒藥</label>
+      </div>
+    </div>
+
+    <!-- 步驟 4：模式 -->
+    <div class="card">
+      <h2>④ 選擇模式</h2>
+      <div class="grid cols1" style="gap:10px">
+        <button id="modePlay">🎮 遊玩模式（建立房間，大家手機加入）</button>
+        <button class="secondary" id="modeJudge">🧑‍⚖️ 法官模式（單機輔助，由我當法官）</button>
+      </div>
+      <p class="muted small" style="margin-top:10px">
+        遊玩模式：建立房號，玩家用手機加入，系統語音引導每個夜晚與白天流程，並私下發送角色。<br />
+        法官模式：你就是法官，這台裝置作為輔助與計時、語音提示，並記錄場上狀態。
+      </p>
+    </div>
+    <p class="muted small" style="text-align:center">已加入房間？ <a href="/join.html">點此用房號加入 →</a></p>
+  </div>
+
+  <script type="module">
+    import { toast } from '/js/ui.js';
+
+    let ROLES = {}, PRESETS = {};
+    let count = 9;
+    let config = {};
+
+    const res = await fetch('/api/roles').then((r) => r.json());
+    ROLES = res.roles; PRESETS = res.presets;
+
+    const cntVal = document.getElementById('cntVal');
+    const roleList = document.getElementById('roleList');
+    const cfgStatus = document.getElementById('cfgStatus');
+
+    function applyPreset() {
+      config = { ...(PRESETS[count] || {}) };
+      renderRoles();
+    }
+
+    function totalOf() {
+      return Object.values(config).reduce((a, b) => a + b, 0);
+    }
+
+    function validate() {
+      const total = totalOf();
+      const wolves = Object.entries(config).filter(([id]) => ROLES[id].camp === 'wolf').reduce((a, [, n]) => a + n, 0);
+      const errs = [];
+      if (total !== count) errs.push(`角色總數 ${total} 與人數 ${count} 不符（差 ${count - total}）。`);
+      if (wolves < 1) errs.push('至少 1 名狼人。');
+      if (total - wolves <= wolves) errs.push('好人需多於狼人。');
+      cfgStatus.className = 'banner ' + (errs.length ? 'wolf-win' : 'good-win');
+      cfgStatus.textContent = errs.length ? '⚠ ' + errs.join(' ') : `✓ 配置合法：共 ${total} 人（${wolves} 狼 / ${total - wolves} 好人）`;
+      return errs.length === 0;
+    }
+
+    function renderRoles() {
+      roleList.innerHTML = '';
+      // 顯示所有角色，數量可調
+      for (const id of Object.keys(ROLES)) {
+        const r = ROLES[id];
+        const n = config[id] || 0;
+        const wrap = document.createElement('div');
+        wrap.className = 'list-item';
+        wrap.innerHTML = `
+          <div>
+            <strong>${r.emoji} ${r.name}</strong>
+            <span class="tag ${r.camp}">${r.camp === 'wolf' ? '狼' : r.camp === 'god' ? '神' : '民'}</span>
+            <div class="muted small">${r.tip}</div>
+          </div>`;
+        const stepper = document.createElement('div');
+        stepper.className = 'stepper';
+        stepper.style.width = '130px';
+        const minus = document.createElement('button');
+        minus.className = 'secondary'; minus.textContent = '−';
+        const val = document.createElement('div'); val.className = 'val'; val.textContent = n;
+        const plus = document.createElement('button');
+        plus.className = 'secondary'; plus.textContent = '＋';
+        minus.onclick = () => { config[id] = Math.max(0, (config[id] || 0) - 1); if (config[id] === 0) delete config[id]; renderRoles(); };
+        plus.onclick = () => { config[id] = (config[id] || 0) + 1; renderRoles(); };
+        stepper.append(minus, val, plus);
+        wrap.appendChild(stepper);
+        roleList.appendChild(wrap);
+      }
+      validate();
+    }
+
+    document.getElementById('cntMinus').onclick = () => { if (count > 8) { count--; cntVal.textContent = count; applyPreset(); } };
+    document.getElementById('cntPlus').onclick = () => { if (count < 16) { count++; cntVal.textContent = count; applyPreset(); } };
+    document.getElementById('resetPreset').onclick = applyPreset;
+
+    function save() {
+      if (!validate()) { toast('角色配置不正確，請調整。', true); return false; }
+      const options = {
+        winCondition: document.getElementById('optWin').value,
+        witchSelfSave: document.getElementById('optSelfSave').value,
+        witchDouble: document.getElementById('optDouble').checked
+      };
+      sessionStorage.setItem('ww_config', JSON.stringify(config));
+      sessionStorage.setItem('ww_options', JSON.stringify(options));
+      sessionStorage.setItem('ww_count', String(count));
+      return true;
+    }
+
+    document.getElementById('modePlay').onclick = () => { if (save()) location.href = '/host.html'; };
+    document.getElementById('modeJudge').onclick = () => { if (save()) location.href = '/judge.html'; };
+
+    applyPreset();
+  </script>
+</body>
+</html>

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>法官模式 · 狼人殺輔助器</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="title-row">
+      <span class="logo">🧑‍⚖️</span>
+      <h1>法官模式</h1>
+      <button class="ghost sm" id="voiceToggle" style="margin-left:auto;width:auto">🔊 語音</button>
+    </div>
+
+    <div class="banner" id="phaseBanner">準備中…</div>
+    <div class="step-indicator" id="stepDots"></div>
+
+    <!-- 主面板，依階段切換 -->
+    <div id="panel"></div>
+
+    <div class="card">
+      <h3>場上狀態</h3>
+      <div class="seat-grid" id="boardSeats"></div>
+      <details style="margin-top:10px">
+        <summary class="muted small">查看角色分配（法官專用）</summary>
+        <div id="roleMap" class="small" style="margin-top:8px"></div>
+      </details>
+      <details style="margin-top:8px">
+        <summary class="muted small">事件記錄</summary>
+        <div class="log" id="historyLog"></div>
+      </details>
+    </div>
+    <button class="ghost" onclick="location.href='/'">← 回首頁重新設定</button>
+  </div>
+
+  <script type="module">
+    import { Game } from '/shared/engine.js';
+    import { ROLES, isWolf } from '/shared/roles.js';
+    import { speak, setVoiceEnabled, isVoiceEnabled, warmup } from '/js/voice.js';
+    import { toast, el, renderSeats, REASON_TEXT } from '/js/ui.js';
+
+    const config = JSON.parse(sessionStorage.getItem('ww_config') || 'null');
+    const options = JSON.parse(sessionStorage.getItem('ww_options') || '{}');
+    if (!config) { location.href = '/'; }
+
+    const game = new Game(config, options);
+    const N = game.totalSeats;
+    for (let i = 1; i <= N; i++) game.addPlayer(`${i}號`);
+    game.dealRoles();
+
+    const panel = document.getElementById('panel');
+    const phaseBanner = document.getElementById('phaseBanner');
+    const stepDots = document.getElementById('stepDots');
+
+    // 語音開關
+    const vbtn = document.getElementById('voiceToggle');
+    function refreshVoiceBtn() { vbtn.textContent = isVoiceEnabled() ? '🔊 語音開' : '🔇 語音關'; }
+    vbtn.onclick = () => { setVoiceEnabled(!isVoiceEnabled()); refreshVoiceBtn(); if (isVoiceEnabled()) warmup(); };
+    refreshVoiceBtn();
+
+    // ── 場上狀態渲染 ──
+    function renderBoard() {
+      renderSeats(document.getElementById('boardSeats'), game.players, {});
+      const rm = document.getElementById('roleMap');
+      rm.innerHTML = game.players.map((p) => {
+        const r = ROLES[p.roleId];
+        return `<span class="pill" style="margin:2px">${p.seat}號 ${r.emoji}${r.name}${p.alive ? '' : ' ✕'}</span>`;
+      }).join(' ');
+      const hl = document.getElementById('historyLog');
+      hl.innerHTML = game.history.map(formatHistory).join('');
+    }
+    function formatHistory(h) {
+      if (h.type === 'night') {
+        const d = h.deaths.length ? h.deaths.map((x) => `${x.seat}號(${REASON_TEXT[x.reason]})`).join('、') : '平安夜';
+        return `<div>第${h.day}夜：${d}</div>`;
+      }
+      if (h.type === 'vote') return `<div>第${h.day}天投票：${h.target ? h.target + '號出局' + (h.idiot ? '(白痴翻牌)' : '') : '無人出局'}</div>`;
+      if (h.type === 'gun') return `<div>第${h.day}天：${h.shooter}號開槍帶走 ${h.target}號</div>`;
+      return '';
+    }
+
+    function setDots(steps, active) {
+      stepDots.innerHTML = '';
+      steps.forEach((s, i) => {
+        const d = el('div', { class: 'step-dot' + (i < active ? ' done' : i === active ? ' active' : '') });
+        stepDots.appendChild(d);
+      });
+    }
+
+    // ── 選人元件 ──
+    function seatPicker(opts) {
+      // opts: { allowNull, nullLabel, filter, highlightRoles, onPick }
+      const grid = el('div', { class: 'seat-grid' });
+      let selected = null;
+      const targets = game.alivePlayers().filter((p) => (opts.filter ? opts.filter(p) : true));
+      function paint() {
+        grid.innerHTML = '';
+        for (const p of targets) {
+          const isHi = opts.highlightRoles && opts.highlightRoles.includes(p.roleId);
+          const div = el('div', { class: 'seat' + (selected === p.seat ? ' sel' : '') });
+          div.appendChild(el('div', { class: 'num', text: String(p.seat) }));
+          div.appendChild(el('div', { class: 'nm', text: isHi ? ROLES[p.roleId].name : '' }));
+          div.style.cursor = 'pointer';
+          div.onclick = () => { selected = p.seat; paint(); opts.onPick && opts.onPick(selected); };
+          grid.appendChild(div);
+        }
+      }
+      paint();
+      const box = el('div', {}, [grid]);
+      if (opts.allowNull) {
+        const nb = el('button', { class: 'ghost sm', style: 'width:auto;margin-top:8px', text: opts.nullLabel || '不選擇 / 空過', onclick: () => { selected = null; paint(); opts.onPick && opts.onPick(null); } });
+        box.appendChild(nb);
+      }
+      box.getSelected = () => selected;
+      return box;
+    }
+
+    function btn(text, cls, onclick) {
+      return el('button', { class: cls || '', text, onclick });
+    }
+
+    // ════════════ 遊戲流程 ════════════
+    let nightSteps = [], nightIdx = 0, pickerRef = null;
+
+    function startGame() {
+      phaseBanner.className = 'banner';
+      phaseBanner.textContent = '遊戲開始！請玩家就座（號碼已自動編 1～' + N + '）';
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('p', { class: 'muted', text: '法官提示：請各玩家抽取桌上的號碼牌與角色牌，或由系統發牌（角色分配可於下方展開查看）。準備好後開始第一夜。' }));
+      c.appendChild(btn('🌙 開始第一夜', '', beginNight));
+      panel.appendChild(c);
+      renderBoard();
+    }
+
+    function beginNight() {
+      const day = game.startNight();
+      nightSteps = game.nightSteps();
+      nightIdx = 0;
+      phaseBanner.className = 'banner night';
+      phaseBanner.textContent = `🌙 第 ${day} 夜 · 天黑請閉眼`;
+      speak('天黑請閉眼。');
+      setTimeout(renderNightStep, 700);
+    }
+
+    function renderNightStep() {
+      setDots(nightSteps, nightIdx);
+      renderBoard();
+      if (nightIdx >= nightSteps.length) return endNight();
+      const step = nightSteps[nightIdx];
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+
+      if (step.key === 'guard') {
+        c.appendChild(el('h2', { text: '🛡️ 守衛行動' }));
+        c.appendChild(el('p', { class: 'muted', text: '守衛請睜眼，選擇守護對象（不能連守同一人，可空守）。' }));
+        speak('守衛請睜眼，請選擇要守護的玩家。');
+        const guard = game.playersByRole('guard')[0];
+        pickerRef = seatPicker({
+          allowNull: true, nullLabel: '空守（不守任何人）',
+          onPick: () => {}
+        });
+        c.appendChild(pickerRef);
+        c.appendChild(btn('確認守衛行動 →', '', () => {
+          const r = game.actGuard(pickerRef.getSelected());
+          if (!r.ok) return toast(r.error, true);
+          nextStep();
+        }));
+
+      } else if (step.key === 'wolf') {
+        c.appendChild(el('h2', { text: '🐺 狼人行動' }));
+        const wolves = game.players.filter((p) => isWolf(p.roleId)).map((p) => `${p.seat}號${p.alive ? '' : '(已出局)'}`).join('、');
+        c.appendChild(el('p', { class: 'muted', html: `狼人請睜眼。狼隊：<b>${wolves}</b>。請選擇今晚要擊殺的玩家。` }));
+        speak('狼人請睜眼，請選擇要擊殺的玩家。');
+        pickerRef = seatPicker({ allowNull: true, nullLabel: '空刀（不殺人）', onPick: () => {} });
+        c.appendChild(pickerRef);
+        c.appendChild(btn('確認擊殺目標 →', '', () => {
+          const r = game.actWolf(pickerRef.getSelected());
+          if (!r.ok) return toast(r.error, true);
+          nextStep();
+        }));
+
+      } else if (step.key === 'witch') {
+        c.appendChild(el('h2', { text: '🧪 女巫行動' }));
+        const killed = game.night.wolfTarget;
+        const info = killed != null ? `今晚 <b>${killed}號</b> 被狼人擊殺。` : '今晚無人被狼人擊殺。';
+        c.appendChild(el('p', { class: 'muted', html: `女巫請睜眼。${info}` }));
+        speak('女巫請睜眼。' + (killed != null ? `今晚${killed}號被擊殺，是否使用解藥？` : '今晚平安，請決定是否使用毒藥。'));
+
+        let saveChosen = false, poisonTarget = null;
+        // 解藥
+        if (game.witch.antidote && killed != null) {
+          const saveBtn = btn('💊 使用解藥救 ' + killed + '號', 'good', () => {
+            const r = game.actWitchSave();
+            if (!r.ok) { return toast(r.error, true); } // 防呆：第一晚自救等
+            saveChosen = true;
+            saveBtn.textContent = '✓ 已使用解藥';
+            saveBtn.disabled = true;
+            toast('已使用解藥救 ' + killed + '號');
+          });
+          c.appendChild(saveBtn);
+        } else if (!game.witch.antidote) {
+          c.appendChild(el('p', { class: 'muted small', text: '解藥已用完。' }));
+        }
+        // 毒藥
+        if (game.witch.poison) {
+          c.appendChild(el('label', { text: '☠️ 使用毒藥（選擇對象，可不用）' }));
+          const pp = seatPicker({ allowNull: true, nullLabel: '不使用毒藥', filter: (p) => game.playersByRole('witch').every((w) => w.seat !== p.seat), onPick: (s) => { poisonTarget = s; } });
+          c.appendChild(pp);
+        } else {
+          c.appendChild(el('p', { class: 'muted small', text: '毒藥已用完。' }));
+        }
+        c.appendChild(btn('確認女巫行動 →', '', () => {
+          if (poisonTarget != null) {
+            const r = game.actWitchPoison(poisonTarget);
+            if (!r.ok) return toast(r.error, true);
+          }
+          nextStep();
+        }));
+
+      } else if (step.key === 'seer') {
+        c.appendChild(el('h2', { text: '🔮 預言家行動' }));
+        c.appendChild(el('p', { class: 'muted', text: '預言家請睜眼，選擇要查驗的玩家。' }));
+        speak('預言家請睜眼，請選擇要查驗的玩家。');
+        const resultBox = el('div', { class: 'banner', style: 'display:none' });
+        pickerRef = seatPicker({
+          filter: (p) => game.playersByRole('seer').every((s) => s.seat !== p.seat),
+          onPick: (s) => {
+            const r = game.actSeer(s);
+            if (!r.ok) return toast(r.error, true);
+            resultBox.style.display = 'block';
+            resultBox.className = 'banner ' + (r.result === 'wolf' ? 'wolf-win' : 'good-win');
+            resultBox.textContent = `查驗結果：${s}號 是 ${r.result === 'wolf' ? '🐺 狼人' : '✅ 好人'}`;
+          }
+        });
+        c.appendChild(pickerRef);
+        c.appendChild(resultBox);
+        c.appendChild(btn('完成查驗 →', '', () => {
+          if (game.night.seerTarget == null) return toast('請先選擇查驗對象。', true);
+          nextStep();
+        }));
+      }
+      panel.appendChild(c);
+    }
+
+    function nextStep() { nightIdx++; setTimeout(renderNightStep, 200); }
+
+    function endNight() {
+      const { deaths } = game.resolveNight();
+      phaseBanner.className = 'banner day';
+      phaseBanner.textContent = '☀️ 天亮了';
+      renderBoard();
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: '☀️ 天亮了' }));
+      if (deaths.length === 0) {
+        c.appendChild(el('div', { class: 'banner good-win', text: '昨晚是平安夜，沒有人死亡。' }));
+        speak('天亮了。昨晚是平安夜，沒有人死亡。');
+      } else {
+        const names = deaths.map((d) => `${d.seat}號`).join('、');
+        c.appendChild(el('div', { class: 'banner wolf-win', text: `昨晚死亡：${names}` }));
+        speak(`天亮了。昨晚死亡的是 ${deaths.map((d) => d.seat + '號').join('、')}。`);
+      }
+      panel.appendChild(c);
+      handleGunThen(() => {
+        if (checkOver()) return;
+        c.appendChild(btn('進入白天討論 →', '', startDiscuss));
+      });
+    }
+
+    // 處理待開槍（獵人/狼王）
+    function handleGunThen(done) {
+      const pg = game.pendingGun;
+      if (!pg) { done(); return; }
+      const p = game.getPlayer(pg.seat);
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: (pg.roleId === 'wolfking' ? '👑 狼王開槍' : '🔫 獵人開槍') }));
+      c.appendChild(el('p', { class: 'muted', html: `<b>${pg.seat}號</b>（${ROLES[pg.roleId].name}）出局，可開槍帶走一人。` }));
+      speak(`${pg.seat}號${ROLES[pg.roleId].name}出局，是否開槍？`);
+      const picker = seatPicker({ allowNull: true, nullLabel: '不開槍', filter: (x) => x.seat !== pg.seat });
+      c.appendChild(picker);
+      c.appendChild(btn('確認', 'danger', () => {
+        const r = game.shoot(pg.seat, picker.getSelected());
+        if (!r.ok) return toast(r.error, true);
+        renderBoard();
+        c.remove();
+        if (r.target) toast(`${pg.seat}號 開槍帶走 ${r.target}號`);
+        handleGunThen(done); // 連鎖開槍
+      }));
+      panel.appendChild(c);
+    }
+
+    function checkOver() {
+      const w = game.checkWin();
+      if (w.over) { showGameOver(w.winner); return true; }
+      return false;
+    }
+
+    function startDiscuss() {
+      game.startDiscuss();
+      phaseBanner.className = 'banner day';
+      phaseBanner.textContent = `☀️ 第 ${game.day} 天 · 自由發言`;
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: '💬 發言討論' }));
+      c.appendChild(el('p', { class: 'muted', text: '請存活玩家依序發言。法官可控制計時，完成後進入投票。' }));
+      c.appendChild(timerWidget());
+      c.appendChild(btn('🗳️ 進入投票', '', startVote));
+      panel.appendChild(c);
+      renderBoard();
+    }
+
+    function timerWidget() {
+      const box = el('div', { class: 'card', style: 'background:var(--bg2)' });
+      let sec = 60, timer = null;
+      const disp = el('div', { class: 'val', style: 'font-size:32px;text-align:center' , text: '60 秒'});
+      const row = el('div', { class: 'row' });
+      const startB = btn('開始計時', 'sm secondary', () => {
+        clearInterval(timer); sec = 60; disp.textContent = sec + ' 秒';
+        timer = setInterval(() => { sec--; disp.textContent = sec + ' 秒'; if (sec <= 0) { clearInterval(timer); speak('時間到。'); disp.textContent = '時間到'; } }, 1000);
+      });
+      const stopB = btn('停止', 'sm ghost', () => clearInterval(timer));
+      row.append(startB, stopB);
+      box.append(disp, row);
+      return box;
+    }
+
+    function startVote() {
+      game.startVote();
+      phaseBanner.className = 'banner day';
+      phaseBanner.textContent = `🗳️ 第 ${game.day} 天 · 投票`;
+      speak('請開始投票。');
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: '🗳️ 投票出局' }));
+      c.appendChild(el('p', { class: 'muted', text: '請選擇票數最高（被投出）的玩家，或選擇平票無人出局。' }));
+      const picker = seatPicker({ allowNull: true, nullLabel: '平票 / 無人出局' });
+      c.appendChild(picker);
+      c.appendChild(btn('確認出局結果 →', 'danger', () => {
+        const r = game.execute(picker.getSelected());
+        if (!r.ok) return toast(r.error, true);
+        renderBoard();
+        panel.innerHTML = '';
+        const cc = el('div', { class: 'card' });
+        if (r.executed == null) {
+          cc.appendChild(el('div', { class: 'banner', text: '本輪無人出局。' }));
+          speak('本輪無人出局。');
+        } else if (r.idiot) {
+          cc.appendChild(el('div', { class: 'banner day', text: `${r.executed}號 是白痴！翻牌亮明身份，不死亡但失去投票權。` }));
+          speak(`${r.executed}號是白痴，翻牌不死，但失去投票權。`);
+        } else {
+          cc.appendChild(el('div', { class: 'banner wolf-win', text: `${r.executed}號 被投票出局。` }));
+          speak(`${r.executed}號被投票出局。`);
+        }
+        panel.appendChild(cc);
+        handleGunThen(() => {
+          if (checkOver()) return;
+          cc.appendChild(btn('🌙 進入下一夜', '', beginNight));
+        });
+      }));
+      panel.appendChild(c);
+    }
+
+    function showGameOver(winner) {
+      phaseBanner.className = 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win');
+      phaseBanner.textContent = winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！';
+      speak(winner === 'wolf' ? '遊戲結束，狼人陣營勝利。' : '遊戲結束，好人陣營勝利。');
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: '🎉 遊戲結束' }));
+      c.appendChild(el('div', { class: 'roleMap', html: game.players.map((p) => {
+        const r = ROLES[p.roleId];
+        return `<span class="pill" style="margin:3px">${p.seat}號 ${r.emoji}${r.name}</span>`;
+      }).join(' ') }));
+      c.appendChild(el('div', { class: 'spacer' }));
+      c.appendChild(btn('🔄 再玩一局（相同設定）', '', () => location.reload()));
+      c.appendChild(btn('⚙️ 回首頁重新設定', 'secondary', () => location.href = '/'));
+      panel.appendChild(c);
+      renderBoard();
+    }
+
+    startGame();
+  </script>
+</body>
+</html>
