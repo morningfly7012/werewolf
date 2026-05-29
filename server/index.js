@@ -11,7 +11,11 @@ const ROOT = path.resolve(__dirname, '..');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+// 允許跨來源連線：讓部署在 GitHub Pages 等靜態網域的前端能連到此後端。
+// 可用環境變數 ALLOW_ORIGIN 指定允許的來源（預設 * 全部允許）。
+const io = new Server(server, {
+  cors: { origin: process.env.ALLOW_ORIGIN || '*', methods: ['GET', 'POST'] }
+});
 
 app.use(express.static(path.join(ROOT, 'public')));
 // 規則引擎模組現位於 public/shared，已由上方 static 提供 /shared/*.js
