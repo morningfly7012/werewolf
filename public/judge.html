@@ -64,11 +64,16 @@
     function renderBoard() {
       renderSeats(document.getElementById('boardSeats'), game.players, {});
       const rm = document.getElementById('roleMap');
-      rm.innerHTML = game.players.map((p) => {
+      let rmHtml = game.players.map((p) => {
         const r = ROLES[p.roleId];
         const label = r ? `${r.emoji}${r.name}` : '（未登記）';
         return `<span class="pill" style="margin:2px">${p.seat}號 ${label}${p.alive ? '' : ' ✕'}</span>`;
       }).join(' ');
+      // 顯示邱比特連結的戀人
+      if (game.lovers) {
+        rmHtml += `<div class="banner" style="margin-top:10px">💘 戀人：${game.lovers[0]}號 ❤ ${game.lovers[1]}號</div>`;
+      }
+      rm.innerHTML = rmHtml;
       const hl = document.getElementById('historyLog');
       hl.innerHTML = game.history.map(formatHistory).join('');
     }
@@ -95,6 +100,7 @@
       // opts: { allowNull, nullLabel, filter, highlightRoles, onPick }
       const grid = el('div', { class: 'seat-grid' });
       let selected = null;
+      let nullBtn = null;
       const targets = game.alivePlayers().filter((p) => (opts.filter ? opts.filter(p) : true));
       function paint() {
         grid.innerHTML = '';
@@ -104,15 +110,15 @@
           div.appendChild(el('div', { class: 'num', text: String(p.seat) }));
           div.appendChild(el('div', { class: 'nm', text: isHi ? ROLES[p.roleId].name : '' }));
           div.style.cursor = 'pointer';
-          div.onclick = () => { selected = p.seat; paint(); opts.onPick && opts.onPick(selected); };
+          div.onclick = () => { selected = p.seat; if (nullBtn) nullBtn.style.borderColor = ''; paint(); opts.onPick && opts.onPick(selected); };
           grid.appendChild(div);
         }
       }
       paint();
       const box = el('div', {}, [grid]);
       if (opts.allowNull) {
-        const nb = el('button', { class: 'ghost sm', style: 'width:auto;margin-top:8px', text: opts.nullLabel || '不選擇 / 空過', onclick: () => { selected = null; paint(); opts.onPick && opts.onPick(null); } });
-        box.appendChild(nb);
+        nullBtn = el('button', { class: 'ghost', style: 'margin-top:10px', text: opts.nullLabel || '不選擇 / 空過', onclick: () => { selected = null; paint(); nullBtn.style.borderColor = 'var(--accent)'; opts.onPick && opts.onPick(null); } });
+        box.appendChild(nullBtn);
       }
       box.getSelected = () => selected;
       return box;
