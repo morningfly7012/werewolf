@@ -38,7 +38,18 @@ export class Game {
     this.witch = { antidote: true, poison: true };
     this.history = [];        // 事件記錄
     this.pendingGun = null;   // 待處理的開槍 { seat }
-    this.winner = null;       // 'wolf' | 'good'
+    this.winner = null;       // 'wolf' | 'good' | 'lovers'
+    this.lovers = null;       // 邱比特連結的戀人 [seatA, seatB]
+  }
+
+  // 登記角色（實體牌模式：第一晚由法官登記座位身份）
+  registerRole(seat, roleId) {
+    const p = this.getPlayer(seat);
+    if (p) p.roleId = roleId;
+  }
+  // 將尚未登記角色的座位設為平民
+  assignRemainingAsVillager() {
+    for (const p of this.players) if (!p.roleId) p.roleId = 'villager';
   }
 
   // ── 玩家管理 ──────────────────────────────
@@ -83,12 +94,13 @@ export class Game {
     const present = new Set(this.players.map((p) => p.roleId));
     // 參與夜晚刀人的狼角色（含狼人/狼王/白狼王，不含隱狼）
     const killerRoles = Object.keys(ROLES).filter((id) => isNightKiller(id));
-    const order = [
-      { key: 'guard', roles: ['guard'] },
-      { key: 'wolf', roles: killerRoles }, // 狼人陣營一起刀
-      { key: 'witch', roles: ['witch'] },
-      { key: 'seer', roles: ['seer'] }
-    ];
+    const order = [];
+    // 邱比特僅第一晚行動
+    if (this.day === 1) order.push({ key: 'cupid', roles: ['cupid'] });
+    order.push({ key: 'guard', roles: ['guard'] });
+    order.push({ key: 'wolf', roles: killerRoles }); // 狼人陣營一起刀
+    order.push({ key: 'witch', roles: ['witch'] });
+    order.push({ key: 'seer', roles: ['seer'] });
     for (const o of order) {
       const anyAlive = o.roles.some((r) => this.playersByRole(r).length > 0);
       const anyPresent = o.roles.some((r) => present.has(r));
@@ -111,6 +123,32 @@ export class Game {
       seerTarget: null
     };
     return this.day;
+  }
+
+  // 邱比特連結戀人（第一晚）
+  actCupid(seatA, seatB) {
+    if (this.day !== 1) return { ok: false, error: '邱比特只能在第一晚連結戀人。' };
+    if (seatA == null || seatB == null || seatA === seatB) {
+      return { ok: false, error: '請選擇兩名不同的玩家成為戀人。' };
+    }
+    const a = this.getPlayer(seatA), b = this.getPlayer(seatB);
+    if (!a || !b) return { ok: false, error: '戀人目標無效。' };
+    this.lovers = [seatA, seatB];
+    return { ok: true, lovers: [seatA, seatB] };
+  }
+
+  // 戀人殉情：若一名戀人已死，另一人立即殉情。回傳新增死亡的座位。
+  _resolveLovers() {
+    if (!this.lovers) return [];
+    const [a, b] = this.lovers;
+    const pa = this.getPlayer(a), pb = this.getPlayer(b);
+    const dead = [];
+    if (pa && pb) {
+      if (!pa.alive && pb.alive) { pb.alive = false; pb.deadReason = 'lover'; pb.deadDay = this.day; dead.push(b); }
+      else if (!pb.alive && pa.alive) { pa.alive = false; pa.deadReason = 'lover'; pa.deadDay = this.day; dead.push(a); }
+    }
+    if (dead.length) this.history.push({ day: this.day, type: 'lover', deaths: dead.slice() });
+    return dead;
   }
 
   // 守衛行動
@@ -249,11 +287,15 @@ export class Game {
       }
     }
 
+    // 檢查死者中是否有獵人/狼王且非被毒 → 可開槍（以原始死亡判定，殉情不開槍）
+    this.pendingGun = this._findGunner(deaths.map((d) => d.seat));
+
+    // 戀人殉情（不觸發開槍）
+    const loverDead = this._resolveLovers();
+    for (const s of loverDead) deaths.push({ seat: s, reason: 'lover' });
+
     this.history.push({ day: this.day, type: 'night', deaths: deaths.map((d) => ({ ...d })) });
     this.phase = 'dayAnnounce';
-
-    // 檢查死者中是否有獵人/狼王且非被毒 → 可開槍
-    this.pendingGun = this._findGunner(deaths.map((d) => d.seat));
     return { deaths };
   }
 
@@ -264,7 +306,7 @@ export class Game {
       const p = this.getPlayer(seat);
       if (!p) continue;
       const canGun = ROLES[p.roleId] && ROLES[p.roleId].gunOnDeath;
-      if (canGun && p.deadReason !== 'poison') {
+      if (canGun && p.deadReason !== 'poison' && p.deadReason !== 'lover') {
         return { seat, roleId: p.roleId };
       }
     }
@@ -287,7 +329,8 @@ export class Game {
     t.deadDay = this.day;
     this.history.push({ day: this.day, type: 'gun', shooter: shooterSeat, target: targetSeat });
     this.pendingGun = this._findGunner([targetSeat]); // 連鎖開槍
-    return { ok: true, target: targetSeat };
+    const loverDead = this._resolveLovers();
+    return { ok: true, target: targetSeat, loverDead };
   }
 
   // ── 白天主動技能 ──────────────────────────
@@ -304,14 +347,16 @@ export class Game {
       t.deadDay = this.day;
       this.history.push({ day: this.day, type: 'duel', knight: knightSeat, target: targetSeat, result: 'wolf' });
       this.pendingGun = this._findGunner([targetSeat]);
-      return { ok: true, targetIsWolf: true, skipVote: true, deadSeat: targetSeat };
+      const loverDead = this._resolveLovers();
+      return { ok: true, targetIsWolf: true, skipVote: true, deadSeat: targetSeat, loverDead };
     } else {
       k.alive = false;
       k.deadReason = 'duel';
       k.deadDay = this.day;
       this.history.push({ day: this.day, type: 'duel', knight: knightSeat, target: targetSeat, result: 'good' });
       this.pendingGun = null; // 騎士無開槍
-      return { ok: true, targetIsWolf: false, skipVote: false, deadSeat: knightSeat };
+      const loverDead = this._resolveLovers();
+      return { ok: true, targetIsWolf: false, skipVote: false, deadSeat: knightSeat, loverDead };
     }
   }
 
@@ -334,7 +379,8 @@ export class Game {
     this.history.push({ day: this.day, type: 'boom', seat, target: took });
     // 自爆帶走的人若為獵人/狼王仍可開槍
     this.pendingGun = took != null ? this._findGunner([took]) : null;
-    return { ok: true, took, skipVote: true };
+    const loverDead = this._resolveLovers();
+    return { ok: true, took, skipVote: true, loverDead };
   }
 
   // ── 白天投票 ──────────────────────────────
@@ -367,7 +413,8 @@ export class Game {
     p.deadDay = this.day;
     this.history.push({ day: this.day, type: 'vote', target: seat });
     this.pendingGun = this._findGunner([seat]);
-    return { ok: true, idiot: false, executed: seat };
+    const loverDead = this._resolveLovers();
+    return { ok: true, idiot: false, executed: seat, loverDead };
   }
 
   // ── 勝負判定 ──────────────────────────────
@@ -377,6 +424,17 @@ export class Game {
     const gods = alive.filter((p) => isGod(p.roleId)).length;
     const villagers = alive.filter((p) => p.roleId === 'villager').length;
     const goods = gods + villagers;
+
+    // 異營戀人：若兩名戀人分屬不同陣營且為最後僅存的兩人 → 戀人陣營勝
+    if (this.lovers) {
+      const [la, lb] = this.lovers;
+      const pa = this.getPlayer(la), pb = this.getPlayer(lb);
+      if (pa && pb && pa.alive && pb.alive && alive.length === 2 && isWolf(pa.roleId) !== isWolf(pb.roleId)) {
+        this.winner = 'lovers';
+        this.phase = 'gameOver';
+        return { over: true, winner: 'lovers' };
+      }
+    }
 
     if (wolves === 0) {
       this.winner = 'good';
@@ -417,7 +475,8 @@ export class Game {
         idiotRevealed: !!p.idiotRevealed
       })),
       witch: this.witch,
-      pendingGun: this.pendingGun
+      pendingGun: this.pendingGun,
+      hasLovers: !!this.lovers
     };
   }
 }

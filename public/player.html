@@ -171,9 +171,47 @@
       return box;
     }
 
+    // 多選座位（選滿 count 個）
+    function multiSeatButtons(targets, count) {
+      const grid = el('div', { class: 'seat-grid' });
+      const sel = new Set();
+      function paint() {
+        grid.innerHTML = '';
+        for (const t of targets) {
+          const d = el('div', { class: 'seat' + (sel.has(t.seat) ? ' sel' : '') });
+          d.appendChild(el('div', { class: 'num', text: String(t.seat) }));
+          d.appendChild(el('div', { class: 'nm', text: t.name || '' }));
+          d.style.cursor = 'pointer';
+          d.onclick = () => { if (sel.has(t.seat)) sel.delete(t.seat); else { if (sel.size >= count) return toast(`最多選 ${count} 位`, true); sel.add(t.seat); } paint(); };
+          grid.appendChild(d);
+        }
+      }
+      paint();
+      const box = el('div', {}, [grid]);
+      box.get = () => [...sel];
+      return box;
+    }
+
+    socket.on('lover:info', ({ partner }) => {
+      const tag = el('div', { class: 'banner wolf-win', style: 'margin-top:8px', html: `💘 你是<b>戀人</b>，你的戀人是 <b>${partner}號</b>。對方死亡你會殉情。` });
+      meInfo.after(tag);
+    });
+
     socket.on('night:yourTurn', (data) => {
       document.getElementById('hdr').textContent = `${mySeat}號 · 你的行動`;
-      if (data.key === 'guard') {
+      if (data.key === 'cupid') {
+        const picker = multiSeatButtons(data.targets, 2);
+        show(card([
+          el('h2', { text: '💘 邱比特行動' }),
+          el('p', { class: 'muted', text: '指定兩名玩家成為戀人（任一人死亡，另一人會殉情）。' }),
+          picker,
+          btn('確認戀人', '', () => {
+            const sel = picker.get();
+            if (sel.length !== 2) return toast('請選擇兩名戀人。', true);
+            socket.emit('action:cupid', { a: sel[0], b: sel[1] }, (r) => r.ok ? doneWait(`已連結 ${sel[0]}號 ❤ ${sel[1]}號`) : toast(r.error, true));
+          })
+        ]));
+      } else if (data.key === 'guard') {
         const picker = seatButtons(data.targets, { allowNull: true, nullLabel: '空守（不守任何人）' });
         show(card([
           el('h2', { text: '🛡️ 守衛行動' }),

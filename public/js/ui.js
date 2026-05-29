@@ -37,7 +37,8 @@ export const REASON_TEXT = {
   vote: '被投票出局',
   gun: '被開槍帶走',
   duel: '騎士決鬥出局',
-  boom: '白狼王自爆帶走'
+  boom: '白狼王自爆帶走',
+  lover: '殉情'
 };
 
 // 渲染座位網格

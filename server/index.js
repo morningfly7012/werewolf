@@ -101,12 +101,14 @@ function finalizeStep(room) {
 }
 
 const STEP_VOICE = {
+  cupid: '邱比特請睜眼，請指定兩名玩家成為戀人。邱比特請閉眼。',
   guard: '守衛請睜眼，請選擇你要守護的玩家。守衛請閉眼。',
   wolf: '狼人請睜眼，請狼人們商議，選擇今晚要擊殺的玩家。狼人請閉眼。',
   witch: '女巫請睜眼。今晚的情況如下，請決定是否使用解藥或毒藥。女巫請閉眼。',
   seer: '預言家請睜眼，請選擇你要查驗的玩家。預言家請閉眼。'
 };
 const STEP_LABEL = {
+  cupid: '💘 邱比特行動',
   guard: '🛡️ 守衛行動',
   wolf: '🐺 狼人行動',
   witch: '🧪 女巫行動',
@@ -266,6 +268,20 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('action:cupid', ({ a, b }, cb) => {
+    const room = getRoom(socket.data.code);
+    const r = room.game.actCupid(a, b);
+    if (r.ok) {
+      // 私下告知兩名戀人彼此身份
+      for (const [sid, st] of room.seatBySocket) {
+        if (st === a) io.to(sid).emit('lover:info', { partner: b });
+        if (st === b) io.to(sid).emit('lover:info', { partner: a });
+      }
+      if (room.hostSocket) io.to(room.hostSocket).emit('host:actionLog', { who: '邱比特', text: `連結戀人 ${a} 號 ❤ ${b} 號` });
+    }
+    cb && cb(r);
+  });
+
   socket.on('action:guard', ({ target }, cb) => {
     const room = getRoom(socket.data.code);
     const r = room.game.actGuard(target);
@@ -332,7 +348,7 @@ io.on('connection', (socket) => {
     const room = getRoom(socket.data.code);
     const r = room.game.shoot(shooter, target);
     if (r.ok) {
-      io.to(room.code).emit('day:shoot', { shooter, target, pendingGun: room.game.pendingGun });
+      io.to(room.code).emit('day:shoot', { shooter, target, pendingGun: room.game.pendingGun, loverDead: r.loverDead });
       broadcastState(room);
       const win = room.game.checkWin();
       if (win.over) io.to(room.code).emit('game:over', { winner: win.winner });
@@ -352,7 +368,7 @@ io.on('connection', (socket) => {
     const room = getRoom(socket.data.code);
     const r = room.game.execute(seat);
     if (r.ok) {
-      io.to(room.code).emit('day:execute', { seat, idiot: r.idiot, pendingGun: room.game.pendingGun });
+      io.to(room.code).emit('day:execute', { seat, idiot: r.idiot, pendingGun: room.game.pendingGun, loverDead: r.loverDead });
       broadcastState(room);
       const win = room.game.checkWin();
       if (win.over) io.to(room.code).emit('game:over', { winner: win.winner });
@@ -365,7 +381,7 @@ io.on('connection', (socket) => {
     const room = getRoom(socket.data.code);
     const r = room.game.knightDuel(knight, target);
     if (r.ok) {
-      io.to(room.code).emit('day:duel', { knight, target, targetIsWolf: r.targetIsWolf, deadSeat: r.deadSeat, skipVote: r.skipVote, pendingGun: room.game.pendingGun });
+      io.to(room.code).emit('day:duel', { knight, target, targetIsWolf: r.targetIsWolf, deadSeat: r.deadSeat, skipVote: r.skipVote, pendingGun: room.game.pendingGun, loverDead: r.loverDead });
       broadcastState(room);
       const win = room.game.checkWin();
       if (win.over) io.to(room.code).emit('game:over', { winner: win.winner });
@@ -378,7 +394,7 @@ io.on('connection', (socket) => {
     const room = getRoom(socket.data.code);
     const r = room.game.selfDestruct(seat, target);
     if (r.ok) {
-      io.to(room.code).emit('day:boom', { seat, took: r.took, skipVote: r.skipVote, pendingGun: room.game.pendingGun });
+      io.to(room.code).emit('day:boom', { seat, took: r.took, skipVote: r.skipVote, pendingGun: room.game.pendingGun, loverDead: r.loverDead });
       broadcastState(room);
       const win = room.game.checkWin();
       if (win.over) io.to(room.code).emit('game:over', { winner: win.winner });
