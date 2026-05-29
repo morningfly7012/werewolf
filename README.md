@@ -80,6 +80,28 @@ npm start          # 啟動於 http://localhost:3000
 - 房主在 Pages 的遊玩模式畫面填入該網址；玩家加入網址會自動帶上 `?server=`。
 - 或直接用該後端網址本身當作網站入口（後端同時提供前端與 Socket.IO）。
 
+### 在自己的伺服器執行並自動更新
+
+```bash
+git clone https://github.com/morningfly7012/werewolf.git
+cd werewolf && npm install
+sudo npm install -g pm2
+pm2 start npm --name werewolf -- start   # 背景常駐
+pm2 save && pm2 startup                   # 開機自動啟動
+```
+
+讓伺服器**自動跟上最新版本**（每 5 分鐘檢查一次 `main`，有更新就拉取並重啟）：
+
+```bash
+chmod +x scripts/auto-update.sh
+crontab -e
+# 加入這一行（路徑換成你的實際路徑）：
+*/5 * * * * /path/to/werewolf/scripts/auto-update.sh >> /tmp/werewolf-update.log 2>&1
+```
+
+`scripts/auto-update.sh` 會比對遠端 `main`，有新 commit 才 `git reset --hard` + `npm install` + `pm2 restart werewolf`。
+想要「推送後立即更新」可改用 GitHub Webhook 觸發同一支腳本（需對外開一個接收端點）。
+
 ## 🗂️ 專案結構
 
 ```
