@@ -32,7 +32,7 @@
         <div class="log" id="historyLog"></div>
       </details>
     </div>
-    <button class="ghost" onclick="location.href='index.html'">← 回首頁重新設定</button>
+    <button class="ghost" onclick="if(confirm('確定要回首頁重新設定嗎？目前這局的進度將會清除，無法復原。'))location.href='index.html'">← 回首頁重新設定</button>
   </div>
 
   <script type="module">
@@ -124,6 +124,45 @@
 
     // ════════════ 遊戲流程 ════════════
     let nightSteps = [], nightIdx = 0, pickerRef = null;
+    let pnSteps = [], pnIdx = 0, assignedSeats = new Set(); // 實體牌第一晚：邊登記邊行動
+
+    // ── 導覽與「上一步」復原 ──────────────────
+    // 每個步驟畫面透過 goto() 進入，會先存下當下完整狀態快照；
+    // backStep() 可還原到上一個步驟，避免法官按錯。
+    const navStack = [];
+    function snapNav(render) {
+      return {
+        engine: game.snapshot(),
+        nightIdx, pnIdx,
+        nightSteps: [...nightSteps],
+        pnSteps: [...pnSteps],
+        assignedSeats: new Set(assignedSeats),
+        render
+      };
+    }
+    function goto(render) {
+      navStack.push(snapNav(render));
+      render();
+    }
+    function restoreNav(ck) {
+      game.restore(ck.engine);
+      nightIdx = ck.nightIdx; pnIdx = ck.pnIdx;
+      nightSteps = [...ck.nightSteps]; pnSteps = [...ck.pnSteps];
+      assignedSeats = new Set(ck.assignedSeats);
+    }
+    function backStep() {
+      if (navStack.length < 2) { toast('已經是第一步，無法再回上一步。', true); return; }
+      if (!confirm('確定要回到上一步嗎？目前這一步的操作會被取消。')) return;
+      navStack.pop();                 // 丟棄目前步驟
+      const prev = navStack.pop();    // 取出上一步
+      restoreNav(prev);
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      goto(prev.render);              // 重新進入上一步（重新存檔）
+    }
+    // 產生「上一步」按鈕（僅在有上一步時顯示）
+    function backBtn() {
+      return navStack.length >= 2 ? btn('← 上一步（取消這一步）', 'ghost', backStep) : null;
+    }
 
     function startGame() {
       phaseBanner.className = 'banner';
@@ -132,61 +171,76 @@
       const c = el('div', { class: 'card' });
       c.appendChild(el('h2', { text: '🎴 發牌方式' }));
       c.appendChild(el('p', { class: 'muted', text: '選擇要由系統發牌，還是使用實體角色牌。' }));
-      c.appendChild(btn('📱 系統發牌＋傳手機看角色', '', () => { game.dealRoles(); renderPass(1); }));
-      c.appendChild(btn('🃏 系統發牌＋直接開始（法官看角色表）', 'secondary', () => { game.dealRoles(); renderBoard(); beginNight(); }));
-      c.appendChild(btn('✋ 用實體牌＋第一晚登記角色', 'secondary', beginRegistration));
-      c.appendChild(el('p', { class: 'muted small', text: '實體牌模式：玩家自己拿實體角色牌，第一晚各角色起身時，由法官登記是誰；沒被登記到的就是平民。' }));
+      c.appendChild(btn('📱 系統發牌＋傳手機看角色', 'mode', () => { game.dealRoles(); renderPass(1); }));
+      c.appendChild(btn('🃏 系統發牌＋直接開始（法官看角色表）', 'mode', () => { game.dealRoles(); renderBoard(); beginNight(); }));
+      c.appendChild(btn('✋ 用實體牌＋第一晚邊進行邊登記', 'mode', beginPhysicalNight1));
+      c.appendChild(el('p', { class: 'muted small', text: '實體牌模式：玩家自己拿實體角色牌，第一晚各角色起身時，由法官登記是誰並當場行動；沒被登記到的就是平民。' }));
       panel.appendChild(c);
       renderBoard();
     }
 
-    // ── 實體牌：第一晚登記角色 ──────────────────
-    let regSteps = [], regIdx = 0, assignedSeats = new Set();
-    function beginRegistration() {
-      assignedSeats = new Set();
-      // 依序登記設定檔中存在的特殊角色（平民最後自動補上）
-      const orderIds = ['cupid', 'guard', 'werewolf', 'wolfking', 'whitewolfking', 'hiddenwolf', 'witch', 'seer', 'hunter', 'idiot', 'elder', 'knight'];
-      regSteps = orderIds.filter((id) => (config[id] || 0) > 0).map((id) => ({ id, count: config[id] }));
-      regIdx = 0;
-      phaseBanner.className = 'banner night';
-      phaseBanner.textContent = '🌙 第一晚 · 登記角色';
-      speak('天黑請閉眼。第一晚，請依序登記各角色。');
-      renderRegStep();
+    // ── 實體牌：第一晚「邊登記邊行動」──────────────
+    const NIGHT_WAKE = ['cupid', 'guard', 'werewolf', 'wolfking', 'whitewolfking', 'witch', 'seer'];
+    function buildPnSteps() {
+      const steps = [];
+      const reg = (id) => { if ((config[id] || 0) > 0) steps.push({ type: 'register', id, count: config[id] }); };
+      const act = (key) => steps.push({ type: 'act', key });
+      if (config.cupid) { reg('cupid'); act('cupid'); }
+      if (config.guard) { reg('guard'); act('guard'); }
+      // 狼：先登記所有狼角色，再一起刀
+      const wolfRoles = ['werewolf', 'wolfking', 'whitewolfking', 'hiddenwolf'].filter((id) => (config[id] || 0) > 0);
+      wolfRoles.forEach(reg);
+      if (wolfRoles.some((id) => id !== 'hiddenwolf')) act('wolf');
+      if (config.witch) { reg('witch'); act('witch'); }
+      if (config.seer) { reg('seer'); act('seer'); }
+      // 不起身的特殊角色：僅登記（沒被登記者最後自動成為平民）
+      ['hunter', 'idiot', 'elder', 'knight'].forEach(reg);
+      return steps;
     }
 
-    function renderRegStep() {
+    function beginPhysicalNight1() {
+      assignedSeats = new Set();
+      pnSteps = buildPnSteps();
+      pnIdx = 0;
+      game.startNight(); // day=1，建立 night 物件供各行動使用
+      phaseBanner.className = 'banner night';
+      phaseBanner.textContent = '🌙 第一夜 · 邊登記邊行動';
+      speak('天黑請閉眼。');
+      setTimeout(() => goto(renderPnStep), 700);
+    }
+
+    function renderPnStep() {
       renderBoard();
-      if (regIdx >= regSteps.length) {
-        // 其餘座位設為平民，進入第一晚行動
-        game.assignRemainingAsVillager();
-        renderBoard();
-        panel.innerHTML = '';
-        const c = el('div', { class: 'card' });
-        c.appendChild(el('div', { class: 'banner good-win', text: '✅ 角色登記完成，其餘座位皆為平民。' }));
-        c.appendChild(el('p', { class: 'muted', text: '接著進行第一晚的實際行動（守衛、狼人、女巫、預言家等）。' }));
-        c.appendChild(btn('開始第一晚行動 →', '', beginNight));
-        panel.appendChild(c);
-        return;
+      setDots(pnSteps, pnIdx);
+      if (pnIdx >= pnSteps.length) {
+        game.assignRemainingAsVillager(); // 其餘皆平民
+        return endNight();                // 結算第一夜
       }
-      const step = regSteps[regIdx];
-      const r = ROLES[step.id];
+      const st = pnSteps[pnIdx];
+      phaseBanner.className = 'banner night';
+      phaseBanner.textContent = '🌙 第一夜 · 邊登記邊行動';
       panel.innerHTML = '';
       const c = el('div', { class: 'card' });
-      c.appendChild(el('h2', { text: `登記：${r.emoji} ${r.name} × ${step.count}` }));
-      const isNightRole = ['cupid', 'guard', 'werewolf', 'wolfking', 'whitewolfking', 'witch', 'seer'].includes(step.id);
-      c.appendChild(el('p', { class: 'muted', text: isNightRole ? `「${r.name}請睜眼」，請點選 ${step.count} 位 ${r.name} 的座位。` : `${r.name} 夜晚不起身，請直接點選 ${step.count} 位座位登記。` }));
-      if (isNightRole) speak(`${r.name}請睜眼。`);
-      // 多選座位（尚未被登記者）
-      const picker = multiSeatPicker(step.count, (seat) => !assignedSeats.has(seat));
-      c.appendChild(picker);
-      c.appendChild(btn(`確認登記 ${r.name} →`, '', () => {
-        const sel = picker.get();
-        if (sel.length !== step.count) return toast(`請選擇 ${step.count} 位。`, true);
-        for (const s of sel) { game.registerRole(s, step.id); assignedSeats.add(s); }
-        if (isNightRole) speak(`${r.name}請閉眼。`);
-        regIdx++;
-        renderRegStep();
-      }));
+      if (st.type === 'register') {
+        const r = ROLES[st.id];
+        const isWake = NIGHT_WAKE.includes(st.id);
+        c.appendChild(el('h2', { text: `登記：${r.emoji} ${r.name} × ${st.count}` }));
+        c.appendChild(el('p', { class: 'muted', text: isWake ? `「${r.name}請睜眼」，請點選 ${st.count} 位 ${r.name} 的座位，接著立刻行動。` : `${r.name} 夜晚不起身，請直接登記 ${st.count} 位座位。` }));
+        if (isWake) speak(`${r.name}請睜眼。`);
+        const picker = multiSeatPicker(st.count, (seat) => !assignedSeats.has(seat));
+        c.appendChild(picker);
+        c.appendChild(btn(`確認登記 ${r.name} →`, '', () => {
+          const sel = picker.get();
+          if (sel.length !== st.count) return toast(`請選擇 ${st.count} 位。`, true);
+          for (const s of sel) { game.registerRole(s, st.id); assignedSeats.add(s); }
+          pnIdx++;
+          goto(renderPnStep);
+        }));
+      } else {
+        // 行動步驟，重用一般夜晚的行動 UI
+        renderNightAction(st.key, c, () => { pnIdx++; goto(renderPnStep); });
+      }
+      const b = backBtn(); if (b) c.appendChild(b);
       panel.appendChild(c);
     }
 
@@ -278,7 +332,7 @@
       phaseBanner.className = 'banner night';
       phaseBanner.textContent = `🌙 第 ${day} 夜 · 天黑請閉眼`;
       speak('天黑請閉眼。');
-      setTimeout(renderNightStep, 700);
+      setTimeout(() => goto(renderNightStep), 700);
     }
 
     function renderNightStep() {
@@ -288,8 +342,15 @@
       const step = nightSteps[nightIdx];
       panel.innerHTML = '';
       const c = el('div', { class: 'card' });
+      renderNightAction(step.key, c, nextStep);
+      const b = backBtn(); if (b) c.appendChild(b);
+      panel.appendChild(c);
+    }
 
-      if (step.key === 'cupid') {
+    // 渲染某個角色的夜晚行動 UI 到 c，確認後呼叫 onConfirm()。
+    // 同時供一般夜晚與「實體牌第一晚邊登記邊行動」共用。
+    function renderNightAction(key, c, onConfirm) {
+      if (key === 'cupid') {
         c.appendChild(el('h2', { text: '💘 邱比特行動' }));
         c.appendChild(el('p', { class: 'muted', text: '邱比特請睜眼，指定兩名玩家成為戀人（任一人死亡，另一人會殉情）。' }));
         speak('邱比特請睜眼，請指定兩名戀人。');
@@ -301,26 +362,22 @@
           const r = game.actCupid(sel[0], sel[1]);
           if (!r.ok) return toast(r.error, true);
           toast(`戀人：${sel[0]}號 ❤ ${sel[1]}號`);
-          nextStep();
+          onConfirm();
         }));
 
-      } else if (step.key === 'guard') {
+      } else if (key === 'guard') {
         c.appendChild(el('h2', { text: '🛡️ 守衛行動' }));
         c.appendChild(el('p', { class: 'muted', text: '守衛請睜眼，選擇守護對象（不能連守同一人，可空守）。' }));
         speak('守衛請睜眼，請選擇要守護的玩家。');
-        const guard = game.playersByRole('guard')[0];
-        pickerRef = seatPicker({
-          allowNull: true, nullLabel: '空守（不守任何人）',
-          onPick: () => {}
-        });
+        pickerRef = seatPicker({ allowNull: true, nullLabel: '空守（不守任何人）', onPick: () => {} });
         c.appendChild(pickerRef);
         c.appendChild(btn('確認守衛行動 →', '', () => {
           const r = game.actGuard(pickerRef.getSelected());
           if (!r.ok) return toast(r.error, true);
-          nextStep();
+          onConfirm();
         }));
 
-      } else if (step.key === 'wolf') {
+      } else if (key === 'wolf') {
         c.appendChild(el('h2', { text: '🐺 狼人行動' }));
         const wolves = game.players.filter((p) => isWolf(p.roleId)).map((p) => `${p.seat}號${p.alive ? '' : '(已出局)'}`).join('、');
         c.appendChild(el('p', { class: 'muted', html: `狼人請睜眼。狼隊：<b>${wolves}</b>。請選擇今晚要擊殺的玩家。` }));
@@ -330,23 +387,21 @@
         c.appendChild(btn('確認擊殺目標 →', '', () => {
           const r = game.actWolf(pickerRef.getSelected());
           if (!r.ok) return toast(r.error, true);
-          nextStep();
+          onConfirm();
         }));
 
-      } else if (step.key === 'witch') {
+      } else if (key === 'witch') {
         c.appendChild(el('h2', { text: '🧪 女巫行動' }));
         const killed = game.night.wolfTarget;
         const info = killed != null ? `今晚 <b>${killed}號</b> 被狼人擊殺。` : '今晚無人被狼人擊殺。';
         c.appendChild(el('p', { class: 'muted', html: `女巫請睜眼。${info}` }));
         speak('女巫請睜眼。' + (killed != null ? `今晚${killed}號被擊殺，是否使用解藥？` : '今晚平安，請決定是否使用毒藥。'));
 
-        let saveChosen = false, poisonTarget = null;
-        // 解藥
+        let poisonTarget = null;
         if (game.witch.antidote && killed != null) {
           const saveBtn = btn('💊 使用解藥救 ' + killed + '號', 'good', () => {
             const r = game.actWitchSave();
             if (!r.ok) { return toast(r.error, true); } // 防呆：第一晚自救等
-            saveChosen = true;
             saveBtn.textContent = '✓ 已使用解藥';
             saveBtn.disabled = true;
             toast('已使用解藥救 ' + killed + '號');
@@ -355,7 +410,6 @@
         } else if (!game.witch.antidote) {
           c.appendChild(el('p', { class: 'muted small', text: '解藥已用完。' }));
         }
-        // 毒藥
         if (game.witch.poison) {
           c.appendChild(el('label', { text: '☠️ 使用毒藥（選擇對象，可不用）' }));
           const pp = seatPicker({ allowNull: true, nullLabel: '不使用毒藥', filter: (p) => game.playersByRole('witch').every((w) => w.seat !== p.seat), onPick: (s) => { poisonTarget = s; } });
@@ -368,10 +422,10 @@
             const r = game.actWitchPoison(poisonTarget);
             if (!r.ok) return toast(r.error, true);
           }
-          nextStep();
+          onConfirm();
         }));
 
-      } else if (step.key === 'seer') {
+      } else if (key === 'seer') {
         c.appendChild(el('h2', { text: '🔮 預言家行動' }));
         c.appendChild(el('p', { class: 'muted', text: '預言家請睜眼，選擇要查驗的玩家。' }));
         speak('預言家請睜眼，請選擇要查驗的玩家。');
@@ -390,13 +444,12 @@
         c.appendChild(resultBox);
         c.appendChild(btn('完成查驗 →', '', () => {
           if (game.night.seerTarget == null) return toast('請先選擇查驗對象。', true);
-          nextStep();
+          onConfirm();
         }));
       }
-      panel.appendChild(c);
     }
 
-    function nextStep() { nightIdx++; setTimeout(renderNightStep, 200); }
+    function nextStep() { nightIdx++; goto(renderNightStep); }
 
     function endNight() {
       const { deaths } = game.resolveNight();
@@ -414,10 +467,11 @@
         c.appendChild(el('div', { class: 'banner wolf-win', text: `昨晚死亡：${names}` }));
         speak(`天亮了。昨晚死亡的是 ${deaths.map((d) => d.seat + '號').join('、')}。`);
       }
+      const b = backBtn(); if (b) c.appendChild(b);
       panel.appendChild(c);
       handleGunThen(() => {
         if (checkOver()) return;
-        c.appendChild(btn('進入白天討論 →', '', startDiscuss));
+        c.appendChild(btn('進入白天討論 →', '', () => goto(startDiscuss)));
       });
     }
 
@@ -471,7 +525,8 @@
       c.appendChild(timerWidget());
       // 白天主動技能（騎士決鬥、白狼王自爆）
       appendDayAbilities(c);
-      c.appendChild(btn('🗳️ 進入投票', '', startVote));
+      c.appendChild(btn('🗳️ 進入投票', '', () => goto(startVote)));
+      const b = backBtn(); if (b) c.appendChild(b);
       panel.appendChild(c);
       renderBoard();
     }
@@ -598,6 +653,7 @@
           cc.appendChild(btn('🌙 進入下一夜', '', beginNight));
         });
       }));
+      const b = backBtn(); if (b) c.appendChild(b);
       panel.appendChild(c);
     }
 

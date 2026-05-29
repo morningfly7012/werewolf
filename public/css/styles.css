@@ -50,6 +50,9 @@ button.ghost { background: transparent; border: 1px solid var(--line); color: va
 button.danger { background: var(--danger); }
 button.good { background: var(--good); }
 button.sm { width: auto; padding: 8px 14px; font-size: 14px; }
+/* 發牌模式選項：三顆同一色系（紫色系），視覺一致 */
+button.mode { background: var(--bg2); border: 1px solid var(--accent); color: var(--txt); margin-bottom: 2px; }
+button.mode:active { background: #2a2740; }
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
 .grid { display: grid; gap: 8px; }
