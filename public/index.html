@@ -104,8 +104,9 @@
 
     function renderRoles() {
       roleList.innerHTML = '';
-      // 顯示所有角色，數量可調
-      for (const id of Object.keys(ROLES)) {
+      // 顯示所有角色，數量可調；平民固定排在最下面
+      const ids = Object.keys(ROLES).sort((a, b) => (a === 'villager') - (b === 'villager'));
+      for (const id of ids) {
         const r = ROLES[id];
         const n = config[id] || 0;
         const wrap = document.createElement('div');
