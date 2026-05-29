@@ -52,6 +52,35 @@ export class Game {
     for (const p of this.players) if (!p.roleId) p.roleId = 'villager';
   }
 
+  // ── 狀態快照／還原（供「上一步」復原使用）────
+  snapshot() {
+    return JSON.parse(JSON.stringify({
+      players: this.players,
+      phase: this.phase,
+      day: this.day,
+      night: this.night,
+      lastGuardTarget: this.lastGuardTarget,
+      witch: this.witch,
+      history: this.history,
+      pendingGun: this.pendingGun,
+      winner: this.winner,
+      lovers: this.lovers
+    }));
+  }
+  restore(snap) {
+    const c = JSON.parse(JSON.stringify(snap));
+    this.players = c.players;
+    this.phase = c.phase;
+    this.day = c.day;
+    this.night = c.night;
+    this.lastGuardTarget = c.lastGuardTarget;
+    this.witch = c.witch;
+    this.history = c.history;
+    this.pendingGun = c.pendingGun;
+    this.winner = c.winner;
+    this.lovers = c.lovers;
+  }
+
   // ── 玩家管理 ──────────────────────────────
   addPlayer(name) {
     const seat = this.players.length + 1;
