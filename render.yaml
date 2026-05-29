@@ -1,0 +1,14 @@
+# Render 一鍵部署設定（Blueprint）
+# 用法：在 Render 點 New → Blueprint，選擇此儲存庫即可自動建立服務。
+services:
+  - type: web
+    name: werewolf-assistant
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/roles
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
