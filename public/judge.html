@@ -48,7 +48,7 @@
     const game = new Game(config, options);
     const N = game.totalSeats;
     for (let i = 1; i <= N; i++) game.addPlayer(`${i}號`);
-    game.dealRoles();
+    // 角色延後指定：系統發牌模式按下後才發；實體牌模式於第一晚登記。
 
     const panel = document.getElementById('panel');
     const phaseBanner = document.getElementById('phaseBanner');
@@ -66,7 +66,8 @@
       const rm = document.getElementById('roleMap');
       rm.innerHTML = game.players.map((p) => {
         const r = ROLES[p.roleId];
-        return `<span class="pill" style="margin:2px">${p.seat}號 ${r.emoji}${r.name}${p.alive ? '' : ' ✕'}</span>`;
+        const label = r ? `${r.emoji}${r.name}` : '（未登記）';
+        return `<span class="pill" style="margin:2px">${p.seat}號 ${label}${p.alive ? '' : ' ✕'}</span>`;
       }).join(' ');
       const hl = document.getElementById('historyLog');
       hl.innerHTML = game.history.map(formatHistory).join('');
@@ -126,15 +127,92 @@
 
     function startGame() {
       phaseBanner.className = 'banner';
-      phaseBanner.textContent = '遊戲開始！號碼已自動編 1～' + N;
+      phaseBanner.textContent = '選擇發牌方式（號碼已編 1～' + N + '）';
       panel.innerHTML = '';
       const c = el('div', { class: 'card' });
-      c.appendChild(el('h2', { text: '🃏 發牌完成' }));
-      c.appendChild(el('p', { class: 'muted', text: '可以把這支手機依號碼順序傳給每位玩家，讓他們各自看自己的角色；或如果你用實體牌，直接開始第一夜。' }));
-      c.appendChild(btn('📱 傳手機給玩家看角色', '', () => renderPass(1)));
-      c.appendChild(btn('🌙 直接開始第一夜（用實體牌）', 'secondary', beginNight));
+      c.appendChild(el('h2', { text: '🎴 發牌方式' }));
+      c.appendChild(el('p', { class: 'muted', text: '選擇要由系統發牌，還是使用實體角色牌。' }));
+      c.appendChild(btn('📱 系統發牌＋傳手機看角色', '', () => { game.dealRoles(); renderPass(1); }));
+      c.appendChild(btn('🃏 系統發牌＋直接開始（法官看角色表）', 'secondary', () => { game.dealRoles(); renderBoard(); beginNight(); }));
+      c.appendChild(btn('✋ 用實體牌＋第一晚登記角色', 'secondary', beginRegistration));
+      c.appendChild(el('p', { class: 'muted small', text: '實體牌模式：玩家自己拿實體角色牌，第一晚各角色起身時，由法官登記是誰；沒被登記到的就是平民。' }));
       panel.appendChild(c);
       renderBoard();
+    }
+
+    // ── 實體牌：第一晚登記角色 ──────────────────
+    let regSteps = [], regIdx = 0, assignedSeats = new Set();
+    function beginRegistration() {
+      assignedSeats = new Set();
+      // 依序登記設定檔中存在的特殊角色（平民最後自動補上）
+      const orderIds = ['cupid', 'guard', 'werewolf', 'wolfking', 'whitewolfking', 'hiddenwolf', 'witch', 'seer', 'hunter', 'idiot', 'elder', 'knight'];
+      regSteps = orderIds.filter((id) => (config[id] || 0) > 0).map((id) => ({ id, count: config[id] }));
+      regIdx = 0;
+      phaseBanner.className = 'banner night';
+      phaseBanner.textContent = '🌙 第一晚 · 登記角色';
+      speak('天黑請閉眼。第一晚，請依序登記各角色。');
+      renderRegStep();
+    }
+
+    function renderRegStep() {
+      renderBoard();
+      if (regIdx >= regSteps.length) {
+        // 其餘座位設為平民，進入第一晚行動
+        game.assignRemainingAsVillager();
+        renderBoard();
+        panel.innerHTML = '';
+        const c = el('div', { class: 'card' });
+        c.appendChild(el('div', { class: 'banner good-win', text: '✅ 角色登記完成，其餘座位皆為平民。' }));
+        c.appendChild(el('p', { class: 'muted', text: '接著進行第一晚的實際行動（守衛、狼人、女巫、預言家等）。' }));
+        c.appendChild(btn('開始第一晚行動 →', '', beginNight));
+        panel.appendChild(c);
+        return;
+      }
+      const step = regSteps[regIdx];
+      const r = ROLES[step.id];
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: `登記：${r.emoji} ${r.name} × ${step.count}` }));
+      const isNightRole = ['cupid', 'guard', 'werewolf', 'wolfking', 'whitewolfking', 'witch', 'seer'].includes(step.id);
+      c.appendChild(el('p', { class: 'muted', text: isNightRole ? `「${r.name}請睜眼」，請點選 ${step.count} 位 ${r.name} 的座位。` : `${r.name} 夜晚不起身，請直接點選 ${step.count} 位座位登記。` }));
+      if (isNightRole) speak(`${r.name}請睜眼。`);
+      // 多選座位（尚未被登記者）
+      const picker = multiSeatPicker(step.count, (seat) => !assignedSeats.has(seat));
+      c.appendChild(picker);
+      c.appendChild(btn(`確認登記 ${r.name} →`, '', () => {
+        const sel = picker.get();
+        if (sel.length !== step.count) return toast(`請選擇 ${step.count} 位。`, true);
+        for (const s of sel) { game.registerRole(s, step.id); assignedSeats.add(s); }
+        if (isNightRole) speak(`${r.name}請閉眼。`);
+        regIdx++;
+        renderRegStep();
+      }));
+      panel.appendChild(c);
+    }
+
+    // 多選座位元件（需選滿 count 個）
+    function multiSeatPicker(count, allow) {
+      const grid = el('div', { class: 'seat-grid' });
+      const sel = new Set();
+      function paint() {
+        grid.innerHTML = '';
+        for (const p of game.players) {
+          if (!allow(p.seat)) continue;
+          const d = el('div', { class: 'seat' + (sel.has(p.seat) ? ' sel' : '') });
+          d.appendChild(el('div', { class: 'num', text: String(p.seat) }));
+          d.style.cursor = 'pointer';
+          d.onclick = () => {
+            if (sel.has(p.seat)) sel.delete(p.seat);
+            else { if (sel.size >= count) { toast(`最多選 ${count} 位`, true); return; } sel.add(p.seat); }
+            paint();
+          };
+          grid.appendChild(d);
+        }
+      }
+      paint();
+      const box = el('div', {}, [grid]);
+      box.get = () => [...sel];
+      return box;
     }
 
     // 取得狼隊隊友（會睜眼刀人的狼，不含隱狼）供互相辨識
@@ -211,7 +289,22 @@
       panel.innerHTML = '';
       const c = el('div', { class: 'card' });
 
-      if (step.key === 'guard') {
+      if (step.key === 'cupid') {
+        c.appendChild(el('h2', { text: '💘 邱比特行動' }));
+        c.appendChild(el('p', { class: 'muted', text: '邱比特請睜眼，指定兩名玩家成為戀人（任一人死亡，另一人會殉情）。' }));
+        speak('邱比特請睜眼，請指定兩名戀人。');
+        const picker = multiSeatPicker(2, () => true);
+        c.appendChild(picker);
+        c.appendChild(btn('確認戀人 →', '', () => {
+          const sel = picker.get();
+          if (sel.length !== 2) return toast('請選擇兩名戀人。', true);
+          const r = game.actCupid(sel[0], sel[1]);
+          if (!r.ok) return toast(r.error, true);
+          toast(`戀人：${sel[0]}號 ❤ ${sel[1]}號`);
+          nextStep();
+        }));
+
+      } else if (step.key === 'guard') {
         c.appendChild(el('h2', { text: '🛡️ 守衛行動' }));
         c.appendChild(el('p', { class: 'muted', text: '守衛請睜眼，選擇守護對象（不能連守同一人，可空守）。' }));
         speak('守衛請睜眼，請選擇要守護的玩家。');
@@ -345,9 +438,20 @@
         renderBoard();
         c.remove();
         if (r.target) toast(`${pg.seat}號 開槍帶走 ${r.target}號`);
+        announceLovers(r.loverDead);
         handleGunThen(done); // 連鎖開槍
       }));
       panel.appendChild(c);
+    }
+
+    // 戀人殉情提示
+    function announceLovers(loverDead) {
+      if (loverDead && loverDead.length) {
+        const txt = loverDead.map((s) => `${s}號`).join('、') + ' 殉情身亡';
+        toast('💔 ' + txt);
+        speak(txt + '。');
+        renderBoard();
+      }
     }
 
     function checkOver() {
@@ -405,6 +509,7 @@
           const cc = el('div', { class: 'card' });
           cc.appendChild(el('div', { class: 'banner wolf-win', text: `⚔️ ${t}號 是狼人，決鬥成功被處決！` }));
           panel.appendChild(cc);
+          announceLovers(r.loverDead);
           handleGunThen(() => { if (checkOver()) return; cc.appendChild(btn('🌙 直接進入黑夜', '', beginNight)); });
         } else {
           speak(`${t}號是好人，騎士陣亡。`);
@@ -412,6 +517,7 @@
           const cc = el('div', { class: 'card' });
           cc.appendChild(el('div', { class: 'banner', text: `⚔️ ${t}號 是好人，騎士 ${knightSeat}號 陣亡。遊戲繼續。` }));
           panel.appendChild(cc);
+          announceLovers(r.loverDead);
           if (checkOver()) return;
           cc.appendChild(btn('回到發言討論', '', startDiscuss));
         }
@@ -436,6 +542,7 @@
         const cc = el('div', { class: 'card' });
         cc.appendChild(el('div', { class: 'banner wolf-win', text: `🐉 白狼王 ${seat}號 自爆${r.took ? '，帶走 ' + r.took + '號' : ''}！` }));
         panel.appendChild(cc);
+        announceLovers(r.loverDead);
         handleGunThen(() => { if (checkOver()) return; cc.appendChild(btn('🌙 直接進入黑夜', '', beginNight)); });
       }));
       c.appendChild(btn('取消', 'ghost', startDiscuss));
@@ -485,6 +592,7 @@
           speak(`${r.executed}號被投票出局。`);
         }
         panel.appendChild(cc);
+        announceLovers(r.loverDead);
         handleGunThen(() => {
           if (checkOver()) return;
           cc.appendChild(btn('🌙 進入下一夜', '', beginNight));
@@ -494,9 +602,10 @@
     }
 
     function showGameOver(winner) {
+      const lover = winner === 'lovers';
       phaseBanner.className = 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win');
-      phaseBanner.textContent = winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！';
-      speak(winner === 'wolf' ? '遊戲結束，狼人陣營勝利。' : '遊戲結束，好人陣營勝利。');
+      phaseBanner.textContent = lover ? '💘 戀人陣營勝利！' : (winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！');
+      speak(lover ? '遊戲結束，戀人陣營勝利。' : (winner === 'wolf' ? '遊戲結束，狼人陣營勝利。' : '遊戲結束，好人陣營勝利。'));
       panel.innerHTML = '';
       const c = el('div', { class: 'card' });
       c.appendChild(el('h2', { text: '🎉 遊戲結束' }));

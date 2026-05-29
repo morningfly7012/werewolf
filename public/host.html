@@ -190,7 +190,7 @@
 
     // ── 夜晚 ──
     const STEP_TIPS = {
-      guard: '守衛正在手機上選擇守護對象。', wolf: '狼人正在手機上商議擊殺目標。',
+      cupid: '邱比特正在手機上指定戀人。', guard: '守衛正在手機上選擇守護對象。', wolf: '狼人正在手機上商議擊殺目標。',
       witch: '女巫正在手機上決定用藥。', seer: '預言家正在手機上查驗。'
     };
     socket.on('night:step', ({ index, total: tot, key, voice, label }) => {
@@ -244,9 +244,17 @@
       }));
       container.appendChild(box);
     }
-    socket.on('day:shoot', ({ shooter, target, pendingGun }) => {
+    function announceLovers(loverDead) {
+      if (loverDead && loverDead.length) {
+        const txt = loverDead.map((s) => `${s}號`).join('、') + ' 殉情身亡';
+        toast('💔 ' + txt); speak(txt + '。'); renderBoard();
+      }
+    }
+
+    socket.on('day:shoot', ({ shooter, target, pendingGun, loverDead }) => {
       renderBoard();
       if (target) { toast(`${shooter}號 開槍帶走 ${target}號`); speak(`${shooter}號 開槍帶走 ${target}號。`); }
+      announceLovers(loverDead);
       const c = card([ el('h2', { text: '開槍結果' }), el('div', { class: 'banner', text: target ? `${shooter}號 帶走 ${target}號` : `${shooter}號 選擇不開槍` }) ]);
       show(c);
       if (pendingGun) renderGun(pendingGun, c);
@@ -306,24 +314,26 @@
       show(c);
     }
 
-    socket.on('day:duel', ({ knight, target, targetIsWolf, pendingGun }) => {
+    socket.on('day:duel', ({ knight, target, targetIsWolf, pendingGun, loverDead }) => {
       renderBoard();
       const msg = targetIsWolf ? `⚔️ ${target}號 是狼人，決鬥成功被處決！` : `⚔️ ${target}號 是好人，騎士 ${knight}號 陣亡。`;
       speak(targetIsWolf ? `${target}號是狼人，決鬥成功，直接進入黑夜。` : `${target}號是好人，騎士陣亡，遊戲繼續。`);
       const c = card([el('h2', { text: '⚔️ 騎士決鬥結果' }), el('div', { class: 'banner ' + (targetIsWolf ? 'wolf-win' : 'day'), text: msg })]);
       show(c);
+      announceLovers(loverDead);
       if (pendingGun) { renderGun(pendingGun, c); }
       else if (targetIsWolf) c.appendChild(btn('🌙 直接進入黑夜', '', () => socket.emit('host:startNight', {}, () => {})));
       else c.appendChild(btn('回到發言討論', '', renderDiscuss));
       afterGunNext = { label: '🌙 進入下一夜', fn: () => socket.emit('host:startNight', {}, () => {}) };
     });
 
-    socket.on('day:boom', ({ seat, took, pendingGun }) => {
+    socket.on('day:boom', ({ seat, took, pendingGun, loverDead }) => {
       renderBoard();
       const msg = `🐉 白狼王 ${seat}號 自爆${took ? '，帶走 ' + took + '號' : ''}！`;
       speak(`白狼王 ${seat}號 自爆${took ? '，帶走 ' + took + '號' : ''}，直接進入黑夜。`);
       const c = card([el('h2', { text: '🐉 白狼王自爆' }), el('div', { class: 'banner wolf-win', text: msg })]);
       show(c);
+      announceLovers(loverDead);
       afterGunNext = { label: '🌙 進入下一夜', fn: () => socket.emit('host:startNight', {}, () => {}) };
       if (pendingGun) renderGun(pendingGun, c);
       else c.appendChild(btn('🌙 直接進入黑夜', '', () => socket.emit('host:startNight', {}, () => {})));
@@ -357,7 +367,7 @@
       show(c);
     });
 
-    socket.on('day:execute', ({ seat, idiot, pendingGun }) => {
+    socket.on('day:execute', ({ seat, idiot, pendingGun, loverDead }) => {
       renderBoard();
       let msg;
       if (seat == null) msg = '本輪無人出局';
@@ -366,17 +376,20 @@
       speak(msg + '。');
       const c = card([ el('h2', { text: '投票結果' }), el('div', { class: 'banner ' + (idiot ? 'day' : 'wolf-win'), text: msg }) ]);
       show(c);
+      announceLovers(loverDead);
       if (pendingGun) renderGun(pendingGun, c);
       else c.appendChild(btn('🌙 進入下一夜', '', () => socket.emit('host:startNight', {}, () => {})));
     });
 
     socket.on('game:over', ({ winner }) => {
+      const lover = winner === 'lovers';
+      const txt = lover ? '💘 戀人陣營勝利！' : (winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！');
       phaseBanner.className = 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win');
-      phaseBanner.textContent = winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！';
-      speak(winner === 'wolf' ? '遊戲結束，狼人陣營勝利。' : '遊戲結束，好人陣營勝利。');
+      phaseBanner.textContent = txt;
+      speak(lover ? '遊戲結束，戀人陣營勝利。' : (winner === 'wolf' ? '遊戲結束，狼人陣營勝利。' : '遊戲結束，好人陣營勝利。'));
       show(card([
         el('h2', { text: '🎉 遊戲結束' }),
-        el('div', { class: 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win'), text: winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！' }),
+        el('div', { class: 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win'), text: txt }),
         btn('⚙️ 回首頁開新局', '', () => { sessionStorage.removeItem('ww_hostcode'); location.href = 'index.html'; })
       ]));
     });
