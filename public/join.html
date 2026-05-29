@@ -6,7 +6,7 @@
   <title>加入房間</title>
   <script>
     const code = new URLSearchParams(location.search).get('code') || '';
-    location.replace('/player.html' + (code ? '?code=' + encodeURIComponent(code) : ''));
+    location.replace('player.html' + (code ? '?code=' + encodeURIComponent(code) : ''));
   </script>
 </head>
 <body></body>

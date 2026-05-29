@@ -47,6 +47,30 @@ npm start          # 啟動於 http://localhost:3000
 - 遊玩模式下，其他玩家用手機開啟 `http://<你的IP>:3000/player.html` 或掃描房號 QR 碼加入
   （手機需與主機在同一區網）。
 
+## 🌐 部署到 GitHub Pages
+
+本專案已內建 GitHub Actions 工作流程（`.github/workflows/deploy-pages.yml`），
+會把 `public/` 資料夾自動發佈到 GitHub Pages。
+
+**首次設定（只需一次）**：
+1. 進入 GitHub 儲存庫 → **Settings** → **Pages**。
+2. **Build and deployment → Source** 選擇 **GitHub Actions**。
+3. 推送到 `main` 或 `claude/werewolf-game-webapp-fEpYO` 分支即會自動部署，
+   也可在 **Actions** 分頁手動執行 *Deploy to GitHub Pages*。
+4. 完成後網址為 `https://<你的帳號>.github.io/werewolf/`。
+
+> 注意：GitHub Pages 只提供靜態託管。
+> - 🧑‍⚖️ **法官模式**：完整可用（純前端，可離線）。
+> - 🎮 **遊玩模式**：需要 Node 後端（Socket.IO）。在 Pages 上開啟遊玩模式會顯示說明，
+>   你可以把後端網址填入，或在加入網址後加上 `?server=<後端網址>`。
+
+### 讓遊玩模式也能線上連線（選用）
+
+把整個專案部署到任一支援 Node 的平台（Render / Railway / Fly.io 等），啟動
+`npm start`，取得後端網址後：
+- 房主在 Pages 的遊玩模式畫面填入該網址；玩家加入網址會自動帶上 `?server=`。
+- 或直接用該後端網址本身當作網站入口（後端同時提供前端與 Socket.IO）。
+
 ## 🗂️ 專案結構
 
 ```

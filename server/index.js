@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { createRoom, getRoom } from './game/rooms.js';
-import { ROLES, PRESETS, validateConfig, isWolf } from './game/roles.js';
+import { ROLES, PRESETS, validateConfig, isWolf } from '../public/shared/roles.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -14,8 +14,7 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(express.static(path.join(ROOT, 'public')));
-// 讓瀏覽器（法官模式）也能載入共用的規則引擎模組
-app.use('/shared', express.static(path.join(ROOT, 'server', 'game')));
+// 規則引擎模組現位於 public/shared，已由上方 static 提供 /shared/*.js
 
 app.get('/api/roles', (req, res) => res.json({ roles: ROLES, presets: PRESETS }));
 

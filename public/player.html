@@ -4,8 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>玩家 · 狼人殺</title>
-  <link rel="stylesheet" href="/css/styles.css" />
-  <script src="/socket.io/socket.io.js"></script>
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
   <div class="wrap center">
@@ -18,11 +17,34 @@
   </div>
 
   <script type="module">
-    import { toast, el, REASON_TEXT } from '/js/ui.js';
+    import { toast, el, REASON_TEXT } from './js/ui.js';
+    import { getBackend, setBackend, loadSocketIO } from './js/net.js';
 
-    const socket = io();
     const panel = document.getElementById('panel');
     const meInfo = document.getElementById('meInfo');
+
+    const backendBase = getBackend();
+    let socket;
+    try {
+      const ioFn = await loadSocketIO(backendBase);
+      socket = ioFn(backendBase || undefined);
+    } catch (e) {
+      panel.innerHTML = '';
+      const c = document.createElement('div');
+      c.className = 'card';
+      c.innerHTML = '<h2>⚠ 無法連線後端</h2>' +
+        '<p class="muted">遊玩模式需要連線到後端伺服器。請向房主索取「後端網址」，或在加入網址後面加上 <code>?server=後端網址</code>。</p>';
+      const inp = document.createElement('input');
+      inp.placeholder = '後端伺服器網址（向房主索取）';
+      inp.value = getBackend();
+      c.appendChild(inp);
+      const b = document.createElement('button');
+      b.textContent = '儲存並重試'; b.style.marginTop = '10px';
+      b.onclick = () => { setBackend(inp.value.trim()); location.reload(); };
+      c.appendChild(b);
+      panel.appendChild(c);
+      throw e;
+    }
 
     let myCode = sessionStorage.getItem('ww_pcode') || new URLSearchParams(location.search).get('code') || '';
     let myName = sessionStorage.getItem('ww_pname') || '';

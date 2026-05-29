@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>狼人殺輔助器</title>
-  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
   <div class="wrap center">
@@ -67,18 +67,15 @@
         法官模式：你就是法官，這台裝置作為輔助與計時、語音提示，並記錄場上狀態。
       </p>
     </div>
-    <p class="muted small" style="text-align:center">已加入房間？ <a href="/join.html">點此用房號加入 →</a></p>
+    <p class="muted small" style="text-align:center">已加入房間？ <a href="join.html">點此用房號加入 →</a></p>
   </div>
 
   <script type="module">
-    import { toast } from '/js/ui.js';
+    import { toast } from './js/ui.js';
+    import { ROLES, PRESETS } from './shared/roles.js';
 
-    let ROLES = {}, PRESETS = {};
     let count = 9;
     let config = {};
-
-    const res = await fetch('/api/roles').then((r) => r.json());
-    ROLES = res.roles; PRESETS = res.presets;
 
     const cntVal = document.getElementById('cntVal');
     const roleList = document.getElementById('roleList');
@@ -153,8 +150,8 @@
       return true;
     }
 
-    document.getElementById('modePlay').onclick = () => { if (save()) location.href = '/host.html'; };
-    document.getElementById('modeJudge').onclick = () => { if (save()) location.href = '/judge.html'; };
+    document.getElementById('modePlay').onclick = () => { if (save()) location.href = 'host.html'; };
+    document.getElementById('modeJudge').onclick = () => { if (save()) location.href = 'judge.html'; };
 
     applyPreset();
   </script>

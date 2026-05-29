@@ -1,4 +1,4 @@
-import { Game } from './engine.js';
+import { Game } from '../../public/shared/engine.js';
 
 const rooms = new Map();
 

@@ -4,8 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>房主主畫面 · 狼人殺</title>
-  <link rel="stylesheet" href="/css/styles.css" />
-  <script src="/socket.io/socket.io.js"></script>
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
   <div class="wrap">
@@ -22,17 +21,52 @@
       <h3>場上玩家</h3>
       <div class="seat-grid" id="boardSeats"></div>
     </div>
-    <button class="ghost" onclick="if(confirm('確定離開？房間將失效。'))location.href='/'">← 結束並回首頁</button>
+    <button class="ghost" onclick="if(confirm('確定離開？房間將失效。'))location.href='index.html'">← 結束並回首頁</button>
   </div>
 
   <script type="module">
-    import { speak, setVoiceEnabled, isVoiceEnabled, warmup } from '/js/voice.js';
-    import { toast, el, renderSeats } from '/js/ui.js';
+    import { speak, setVoiceEnabled, isVoiceEnabled, warmup } from './js/voice.js';
+    import { toast, el, renderSeats } from './js/ui.js';
+    import { getBackend, setBackend, looksStaticHost, loadSocketIO } from './js/net.js';
 
-    const socket = io();
     const panel = document.getElementById('panel');
     const phaseBanner = document.getElementById('phaseBanner');
     const stepDots = document.getElementById('stepDots');
+
+    // 連線後端（同源或外部）。靜態託管且未設定後端時，顯示說明。
+    const backendBase = getBackend();
+    let socket;
+    try {
+      const ioFn = await loadSocketIO(backendBase);
+      socket = ioFn(backendBase || undefined);
+    } catch (e) {
+      renderBackendNeeded();
+      throw e; // 終止後續初始化
+    }
+
+    function renderBackendNeeded() {
+      phaseBanner.className = 'banner wolf-win';
+      phaseBanner.textContent = '⚠ 遊玩模式需要後端伺服器';
+      const inp = document.createElement('input');
+      inp.placeholder = '例如 https://your-app.onrender.com';
+      inp.value = getBackend();
+      const c = document.createElement('div');
+      c.className = 'card';
+      c.innerHTML = '<h2>遊玩模式需要連線後端</h2>' +
+        '<p class="muted">目前頁面是靜態託管（如 GitHub Pages），無法直接執行多人連線房間。你可以：</p>' +
+        '<p class="muted small">① 改用 <b>法官模式</b>（單機輔助，免後端）。<br>' +
+        '② 將本專案部署到一個 Node 後端（Render / Railway / Fly 等），再把網址填到下方。</p>';
+      c.appendChild(document.createElement('label')).textContent = '後端伺服器網址';
+      c.appendChild(inp);
+      const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '10px';
+      const save = document.createElement('button'); save.textContent = '儲存並連線';
+      save.onclick = () => { setBackend(inp.value.trim()); location.reload(); };
+      const judge = document.createElement('button'); judge.className = 'secondary'; judge.textContent = '改用法官模式';
+      judge.onclick = () => location.href = 'judge.html';
+      row.append(save, judge);
+      c.appendChild(row);
+      panel.innerHTML = ''; panel.appendChild(c);
+    }
 
     const config = JSON.parse(sessionStorage.getItem('ww_config') || 'null');
     const options = JSON.parse(sessionStorage.getItem('ww_options') || '{}');
@@ -63,7 +97,7 @@
 
     // ── 建立 / 重連房間 ──
     function createOrRejoin() {
-      if (!config) { location.href = '/'; return; }
+      if (!config) { location.href = 'index.html'; return; }
       if (code) {
         socket.emit('host:rejoin', { code }, (res) => {
           if (res.ok) { total = res.total; renderLobby(); }
@@ -73,14 +107,14 @@
     }
     function doCreate() {
       socket.emit('host:create', { config, options }, (res) => {
-        if (!res.ok) { alert('建立失敗：' + (res.errors || []).join(' ')); location.href = '/'; return; }
+        if (!res.ok) { alert('建立失敗：' + (res.errors || []).join(' ')); location.href = 'index.html'; return; }
         code = res.code; total = res.total;
         sessionStorage.setItem('ww_hostcode', code);
         renderLobby();
       });
     }
 
-    function joinUrl() { return location.origin + '/player.html?code=' + code; }
+    function joinUrl() { return new URL('player.html?code=' + code, location.href).href; }
 
     let lobbyInfo = { joined: 0, names: [] };
     function renderLobby() {
@@ -284,7 +318,7 @@
       show(card([
         el('h2', { text: '🎉 遊戲結束' }),
         el('div', { class: 'banner ' + (winner === 'wolf' ? 'wolf-win' : 'good-win'), text: winner === 'wolf' ? '🐺 狼人陣營勝利！' : '✅ 好人陣營勝利！' }),
-        btn('⚙️ 回首頁開新局', '', () => { sessionStorage.removeItem('ww_hostcode'); location.href = '/'; })
+        btn('⚙️ 回首頁開新局', '', () => { sessionStorage.removeItem('ww_hostcode'); location.href = 'index.html'; })
       ]));
     });
 
