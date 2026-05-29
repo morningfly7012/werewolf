@@ -360,6 +360,32 @@ io.on('connection', (socket) => {
     cb && cb(r);
   });
 
+  // 騎士決鬥（白天）
+  socket.on('host:knightDuel', ({ knight, target }, cb) => {
+    const room = getRoom(socket.data.code);
+    const r = room.game.knightDuel(knight, target);
+    if (r.ok) {
+      io.to(room.code).emit('day:duel', { knight, target, targetIsWolf: r.targetIsWolf, deadSeat: r.deadSeat, skipVote: r.skipVote, pendingGun: room.game.pendingGun });
+      broadcastState(room);
+      const win = room.game.checkWin();
+      if (win.over) io.to(room.code).emit('game:over', { winner: win.winner });
+    }
+    cb && cb(r);
+  });
+
+  // 白狼王自爆（白天）
+  socket.on('host:selfDestruct', ({ seat, target }, cb) => {
+    const room = getRoom(socket.data.code);
+    const r = room.game.selfDestruct(seat, target);
+    if (r.ok) {
+      io.to(room.code).emit('day:boom', { seat, took: r.took, skipVote: r.skipVote, pendingGun: room.game.pendingGun });
+      broadcastState(room);
+      const win = room.game.checkWin();
+      if (win.over) io.to(room.code).emit('game:over', { winner: win.winner });
+    }
+    cb && cb(r);
+  });
+
   socket.on('disconnect', () => {
     const room = getRoom(socket.data.code);
     if (!room) return;

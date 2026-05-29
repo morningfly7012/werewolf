@@ -35,7 +35,9 @@ export const REASON_TEXT = {
   wolf: '被狼人擊殺',
   poison: '被女巫毒死',
   vote: '被投票出局',
-  gun: '被開槍帶走'
+  gun: '被開槍帶走',
+  duel: '騎士決鬥出局',
+  boom: '白狼王自爆帶走'
 };
 
 // 渲染座位網格

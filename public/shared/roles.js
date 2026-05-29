@@ -2,6 +2,11 @@
 // camp: 'wolf' 狼人陣營 | 'god' 神職(好人) | 'villager' 平民(好人)
 // 好人陣營 = god + villager
 // nightOrder: 夜晚行動順序 (數字越小越先；null = 夜晚無主動行動)
+// nightKill: 是否參與狼人夜晚刀人（隱狼為 false）
+// hiddenFromSeer: 預言家查驗時是否顯示為好人
+// gunOnDeath: 死亡時是否可開槍（被毒除外）
+// dayAbility: 白天主動技能 'duel' 騎士決鬥 | 'boom' 白狼王自爆
+// toughSkin: 是否能扛過第一次狼刀（長老）
 
 export const ROLES = {
   werewolf: {
@@ -9,6 +14,7 @@ export const ROLES = {
     name: '狼人',
     camp: 'wolf',
     nightOrder: 20,
+    nightKill: true,
     emoji: '🐺',
     desc: '每晚與同伴一起選擇一名玩家擊殺。',
     tip: '夜晚睜眼，與其他狼人商議刀人。'
@@ -18,9 +24,33 @@ export const ROLES = {
     name: '狼王',
     camp: 'wolf',
     nightOrder: 20,
+    nightKill: true,
+    gunOnDeath: true,
     emoji: '👑',
     desc: '狼人陣營。出局（被投票或被獵殺）時可開槍帶走一名玩家；被女巫毒死則不能開槍。',
     tip: '與狼人一起行動，死亡時可開槍。'
+  },
+  whitewolfking: {
+    id: 'whitewolfking',
+    name: '白狼王',
+    camp: 'wolf',
+    nightOrder: 20,
+    nightKill: true,
+    dayAbility: 'boom',
+    emoji: '🐉',
+    desc: '狼人陣營。可在白天發言階段「自爆」並帶走一名玩家，自爆後直接進入黑夜；被投票或被殺死時不能開槍。',
+    tip: '白天可自爆帶走一人。'
+  },
+  hiddenwolf: {
+    id: 'hiddenwolf',
+    name: '隱狼',
+    camp: 'wolf',
+    nightOrder: null,
+    nightKill: false,
+    hiddenFromSeer: true,
+    emoji: '🌑',
+    desc: '狼人陣營，但夜晚不與狼人一起睜眼刀人。預言家查驗時顯示為「好人」。靠隱藏身份協助狼隊獲勝。',
+    tip: '不參與刀人，預言家驗為好人。'
   },
   villager: {
     id: 'villager',
@@ -54,9 +84,30 @@ export const ROLES = {
     name: '獵人',
     camp: 'god',
     nightOrder: null,
+    gunOnDeath: true,
     emoji: '🔫',
     desc: '出局（被投票或被狼刀）時可開槍帶走一名玩家；但被女巫毒死則無法開槍。',
     tip: '死亡時可開槍帶走一人（被毒除外）。'
+  },
+  knight: {
+    id: 'knight',
+    name: '騎士',
+    camp: 'god',
+    nightOrder: null,
+    dayAbility: 'duel',
+    emoji: '⚔️',
+    desc: '白天發言階段可翻牌與一名玩家決鬥：若對方是狼人，對方立即死亡並直接進入黑夜（跳過投票）；若對方是好人，騎士自己死亡，遊戲繼續。',
+    tip: '白天可與一人決鬥驗證身份。'
+  },
+  elder: {
+    id: 'elder',
+    name: '長老',
+    camp: 'god',
+    nightOrder: null,
+    toughSkin: true,
+    emoji: '🧓',
+    desc: '擁有強韌體魄，第一次被狼人擊殺時不會死亡（可擋一刀）；第二次被狼刀、被毒或被投票則正常死亡。',
+    tip: '可扛過第一次狼刀。'
   },
   guard: {
     id: 'guard',
@@ -100,6 +151,14 @@ export function isGod(roleId) {
 }
 export function isGood(roleId) {
   return ROLES[roleId] && ROLES[roleId].camp !== 'wolf';
+}
+// 參與夜晚刀人的狼角色（不含隱狼）
+export function isNightKiller(roleId) {
+  return !!(ROLES[roleId] && ROLES[roleId].nightKill);
+}
+// 預言家查驗結果是否為「狼」
+export function checksAsWolf(roleId) {
+  return isWolf(roleId) && !ROLES[roleId].hiddenFromSeer;
 }
 
 // 計算一份角色配置的總人數

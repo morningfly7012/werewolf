@@ -264,11 +264,70 @@
       const c = card([
         el('h2', { text: '💬 發言討論' }),
         el('p', { class: 'muted', text: '請玩家依號碼順序發言，討論後進入投票。' }),
-        timerWidget(),
-        btn('🗳️ 進入投票', '', () => socket.emit('host:startVote', {}, () => {}))
+        timerWidget()
       ]);
+      // 白天主動技能：由玩家口頭宣告，房主在此輸入（伺服器會驗證身份）
+      c.appendChild(el('label', { text: '若有玩家宣告主動技能：' }));
+      const arow = el('div', { class: 'row' });
+      arow.append(
+        btn('⚔️ 騎士決鬥', 'sm secondary', () => dayAbilityFlow('knight')),
+        btn('🐉 白狼王自爆', 'sm secondary', () => dayAbilityFlow('boom'))
+      );
+      c.appendChild(arow);
+      c.appendChild(btn('🗳️ 進入投票', '', () => socket.emit('host:startVote', {}, () => {})));
       show(c);
     }
+
+    // 白天技能輸入流程（房主代輸入宣告者座位與目標）
+    function dayAbilityFlow(kind) {
+      const isKnight = kind === 'knight';
+      const c = card([
+        el('h2', { text: isKnight ? '⚔️ 騎士決鬥' : '🐉 白狼王自爆' }),
+        el('p', { class: 'muted', text: isKnight ? '請選擇宣告決鬥的「騎士座位」，再選決鬥對象。' : '請選擇宣告自爆的「白狼王座位」，再選要帶走的對象（可不帶）。' })
+      ]);
+      c.appendChild(el('label', { text: isKnight ? '騎士座位' : '白狼王座位' }));
+      const actorPicker = pickerEl({});
+      c.appendChild(actorPicker);
+      c.appendChild(el('label', { text: isKnight ? '決鬥對象' : '帶走對象' }));
+      const targetPicker = pickerEl({ allowNull: !isKnight, nullLabel: '不帶走任何人' });
+      c.appendChild(targetPicker);
+      c.appendChild(btn('確認', 'danger', () => {
+        const actor = actorPicker.get();
+        if (actor == null) return toast('請選擇宣告者座位。', true);
+        if (isKnight) {
+          const t = targetPicker.get();
+          if (t == null) return toast('請選擇決鬥對象。', true);
+          socket.emit('host:knightDuel', { knight: actor, target: t }, (r) => { if (!r.ok) toast(r.error, true); });
+        } else {
+          socket.emit('host:selfDestruct', { seat: actor, target: targetPicker.get() }, (r) => { if (!r.ok) toast(r.error, true); });
+        }
+      }));
+      c.appendChild(btn('取消', 'ghost', renderDiscuss));
+      show(c);
+    }
+
+    socket.on('day:duel', ({ knight, target, targetIsWolf, pendingGun }) => {
+      renderBoard();
+      const msg = targetIsWolf ? `⚔️ ${target}號 是狼人，決鬥成功被處決！` : `⚔️ ${target}號 是好人，騎士 ${knight}號 陣亡。`;
+      speak(targetIsWolf ? `${target}號是狼人，決鬥成功，直接進入黑夜。` : `${target}號是好人，騎士陣亡，遊戲繼續。`);
+      const c = card([el('h2', { text: '⚔️ 騎士決鬥結果' }), el('div', { class: 'banner ' + (targetIsWolf ? 'wolf-win' : 'day'), text: msg })]);
+      show(c);
+      if (pendingGun) { renderGun(pendingGun, c); }
+      else if (targetIsWolf) c.appendChild(btn('🌙 直接進入黑夜', '', () => socket.emit('host:startNight', {}, () => {})));
+      else c.appendChild(btn('回到發言討論', '', renderDiscuss));
+      afterGunNext = { label: '🌙 進入下一夜', fn: () => socket.emit('host:startNight', {}, () => {}) };
+    });
+
+    socket.on('day:boom', ({ seat, took, pendingGun }) => {
+      renderBoard();
+      const msg = `🐉 白狼王 ${seat}號 自爆${took ? '，帶走 ' + took + '號' : ''}！`;
+      speak(`白狼王 ${seat}號 自爆${took ? '，帶走 ' + took + '號' : ''}，直接進入黑夜。`);
+      const c = card([el('h2', { text: '🐉 白狼王自爆' }), el('div', { class: 'banner wolf-win', text: msg })]);
+      show(c);
+      afterGunNext = { label: '🌙 進入下一夜', fn: () => socket.emit('host:startNight', {}, () => {}) };
+      if (pendingGun) renderGun(pendingGun, c);
+      else c.appendChild(btn('🌙 直接進入黑夜', '', () => socket.emit('host:startNight', {}, () => {})));
+    });
 
     function timerWidget() {
       const box = el('div', { class: 'card', style: 'background:var(--bg2)' });
