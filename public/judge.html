@@ -126,13 +126,71 @@
 
     function startGame() {
       phaseBanner.className = 'banner';
-      phaseBanner.textContent = '遊戲開始！請玩家就座（號碼已自動編 1～' + N + '）';
+      phaseBanner.textContent = '遊戲開始！號碼已自動編 1～' + N;
       panel.innerHTML = '';
       const c = el('div', { class: 'card' });
-      c.appendChild(el('p', { class: 'muted', text: '法官提示：請各玩家抽取桌上的號碼牌與角色牌，或由系統發牌（角色分配可於下方展開查看）。準備好後開始第一夜。' }));
-      c.appendChild(btn('🌙 開始第一夜', '', beginNight));
+      c.appendChild(el('h2', { text: '🃏 發牌完成' }));
+      c.appendChild(el('p', { class: 'muted', text: '可以把這支手機依號碼順序傳給每位玩家，讓他們各自看自己的角色；或如果你用實體牌，直接開始第一夜。' }));
+      c.appendChild(btn('📱 傳手機給玩家看角色', '', () => renderPass(1)));
+      c.appendChild(btn('🌙 直接開始第一夜（用實體牌）', 'secondary', beginNight));
       panel.appendChild(c);
       renderBoard();
+    }
+
+    // 取得狼隊隊友（會睜眼刀人的狼，不含隱狼）供互相辨識
+    function killerWolves() {
+      return game.players.filter((p) => ROLES[p.roleId] && ROLES[p.roleId].nightKill);
+    }
+
+    // 傳手機：交接畫面，請第 seat 號接手
+    function renderPass(seat) {
+      phaseBanner.className = 'banner';
+      phaseBanner.textContent = `📱 傳手機看角色（${seat} / ${N}）`;
+      speak(`請把手機交給 ${seat} 號玩家。`);
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('div', { class: 'banner day', html: `請把手機交給 <b style="font-size:34px">${seat}</b> 號玩家` }));
+      c.appendChild(el('p', { class: 'muted', text: '確認只有本人在看，再點下方查看角色。' }));
+      c.appendChild(btn(`我是 ${seat} 號，查看我的角色`, '', () => renderReveal(seat)));
+      panel.appendChild(c);
+    }
+
+    // 傳手機：顯示第 seat 號的角色
+    function renderReveal(seat) {
+      const p = game.getPlayer(seat);
+      const r = ROLES[p.roleId];
+      panel.innerHTML = '';
+      const c = el('div', {});
+      const rc = el('div', { class: 'role-card ' + r.camp });
+      rc.appendChild(el('div', { class: 'role-emoji', text: r.emoji }));
+      rc.appendChild(el('div', { class: 'role-name', text: `${seat}號 · ${r.name}` }));
+      rc.appendChild(el('div', { class: 'muted', text: r.desc }));
+      c.appendChild(rc);
+      // 狼隊友資訊
+      if (isWolf(p.roleId)) {
+        const mates = killerWolves().filter((x) => x.seat !== seat).map((x) => `${x.seat}號`);
+        let txt;
+        if (p.roleId === 'hiddenwolf') txt = '🌑 你是隱狼。狼隊友：' + (mates.length ? mates.join('、') : '（無）') + '。你夜晚不睜眼刀人，預言家驗你為好人。';
+        else txt = '🐺 你的狼隊友：' + (mates.length ? mates.join('、') : '（只有你一隻會刀人的狼）');
+        c.appendChild(el('div', { class: 'banner', style: 'margin-top:12px', html: txt }));
+      }
+      const last = seat >= N;
+      c.appendChild(btn(last ? '蓋牌（最後一位）' : '蓋牌，傳給下一位 →', '', () => {
+        if (last) renderAllRevealed();
+        else renderPass(seat + 1);
+      }));
+      panel.appendChild(c);
+    }
+
+    function renderAllRevealed() {
+      phaseBanner.className = 'banner';
+      phaseBanner.textContent = '所有玩家都看過角色了';
+      speak('所有玩家都看完角色，準備天黑。');
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('div', { class: 'banner good-win', text: '✅ 全員已確認角色' }));
+      c.appendChild(btn('🌙 開始第一夜', '', beginNight));
+      panel.appendChild(c);
     }
 
     function beginNight() {
@@ -307,9 +365,81 @@
       c.appendChild(el('h2', { text: '💬 發言討論' }));
       c.appendChild(el('p', { class: 'muted', text: '請存活玩家依序發言。法官可控制計時，完成後進入投票。' }));
       c.appendChild(timerWidget());
+      // 白天主動技能（騎士決鬥、白狼王自爆）
+      appendDayAbilities(c);
       c.appendChild(btn('🗳️ 進入投票', '', startVote));
       panel.appendChild(c);
       renderBoard();
+    }
+
+    // 在白天面板加入主動技能按鈕
+    function appendDayAbilities(container) {
+      const knights = game.playersByRole('knight');
+      const wwks = game.playersByRole('whitewolfking');
+      if (!knights.length && !wwks.length) return;
+      container.appendChild(el('label', { text: '白天主動技能（玩家宣告時才使用）' }));
+      for (const k of knights) {
+        container.appendChild(btn(`⚔️ 騎士決鬥（${k.seat}號）`, 'secondary', () => doKnightDuel(k.seat)));
+      }
+      for (const w of wwks) {
+        container.appendChild(btn(`🐉 白狼王自爆（${w.seat}號）`, 'danger', () => doSelfDestruct(w.seat)));
+      }
+    }
+
+    function doKnightDuel(knightSeat) {
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: `⚔️ 騎士決鬥（${knightSeat}號）` }));
+      c.appendChild(el('p', { class: 'muted', text: '選擇要決鬥的對象。對方是狼→對方死、直接天黑；對方是好人→騎士陣亡。' }));
+      const picker = seatPicker({ filter: (x) => x.seat !== knightSeat });
+      c.appendChild(picker);
+      c.appendChild(btn('確認決鬥', 'danger', () => {
+        const t = picker.getSelected();
+        if (t == null) return toast('請選擇決鬥對象。', true);
+        const r = game.knightDuel(knightSeat, t);
+        if (!r.ok) return toast(r.error, true);
+        renderBoard();
+        if (r.targetIsWolf) {
+          speak(`${t}號是狼人，決鬥成功，直接進入黑夜。`);
+          panel.innerHTML = '';
+          const cc = el('div', { class: 'card' });
+          cc.appendChild(el('div', { class: 'banner wolf-win', text: `⚔️ ${t}號 是狼人，決鬥成功被處決！` }));
+          panel.appendChild(cc);
+          handleGunThen(() => { if (checkOver()) return; cc.appendChild(btn('🌙 直接進入黑夜', '', beginNight)); });
+        } else {
+          speak(`${t}號是好人，騎士陣亡。`);
+          panel.innerHTML = '';
+          const cc = el('div', { class: 'card' });
+          cc.appendChild(el('div', { class: 'banner', text: `⚔️ ${t}號 是好人，騎士 ${knightSeat}號 陣亡。遊戲繼續。` }));
+          panel.appendChild(cc);
+          if (checkOver()) return;
+          cc.appendChild(btn('回到發言討論', '', startDiscuss));
+        }
+      }));
+      c.appendChild(btn('取消', 'ghost', startDiscuss));
+      panel.appendChild(c);
+    }
+
+    function doSelfDestruct(seat) {
+      panel.innerHTML = '';
+      const c = el('div', { class: 'card' });
+      c.appendChild(el('h2', { text: `🐉 白狼王自爆（${seat}號）` }));
+      c.appendChild(el('p', { class: 'muted', text: '可帶走一名玩家，或不帶人。自爆後直接進入黑夜。' }));
+      const picker = seatPicker({ allowNull: true, nullLabel: '不帶走任何人', filter: (x) => x.seat !== seat });
+      c.appendChild(picker);
+      c.appendChild(btn('確認自爆', 'danger', () => {
+        const r = game.selfDestruct(seat, picker.getSelected());
+        if (!r.ok) return toast(r.error, true);
+        renderBoard();
+        speak(`白狼王 ${seat}號 自爆${r.took ? '，帶走 ' + r.took + '號' : ''}，直接進入黑夜。`);
+        panel.innerHTML = '';
+        const cc = el('div', { class: 'card' });
+        cc.appendChild(el('div', { class: 'banner wolf-win', text: `🐉 白狼王 ${seat}號 自爆${r.took ? '，帶走 ' + r.took + '號' : ''}！` }));
+        panel.appendChild(cc);
+        handleGunThen(() => { if (checkOver()) return; cc.appendChild(btn('🌙 直接進入黑夜', '', beginNight)); });
+      }));
+      c.appendChild(btn('取消', 'ghost', startDiscuss));
+      panel.appendChild(c);
     }
 
     function timerWidget() {

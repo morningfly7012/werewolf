@@ -1,4 +1,4 @@
-import { ROLES, isWolf, isGood, isGod } from './roles.js';
+import { ROLES, isWolf, isGood, isGod, isNightKiller, checksAsWolf } from './roles.js';
 
 // 將角色配置展開為角色陣列，例如 {werewolf:2, villager:1} -> ['werewolf','werewolf','villager']
 function expandConfig(config) {
@@ -81,18 +81,19 @@ export class Game {
   nightSteps() {
     const steps = [];
     const present = new Set(this.players.map((p) => p.roleId));
+    // 參與夜晚刀人的狼角色（含狼人/狼王/白狼王，不含隱狼）
+    const killerRoles = Object.keys(ROLES).filter((id) => isNightKiller(id));
     const order = [
-      { role: 'guard', key: 'guard' },
-      { role: 'werewolf', key: 'wolf', also: ['wolfking'] }, // 狼人＋狼王一起刀
-      { role: 'witch', key: 'witch' },
-      { role: 'seer', key: 'seer' }
+      { key: 'guard', roles: ['guard'] },
+      { key: 'wolf', roles: killerRoles }, // 狼人陣營一起刀
+      { key: 'witch', roles: ['witch'] },
+      { key: 'seer', roles: ['seer'] }
     ];
     for (const o of order) {
-      const roles = [o.role, ...(o.also || [])];
-      const anyAlive = roles.some((r) => this.playersByRole(r).length > 0);
-      const anyPresent = roles.some((r) => present.has(r));
+      const anyAlive = o.roles.some((r) => this.playersByRole(r).length > 0);
+      const anyPresent = o.roles.some((r) => present.has(r));
       if (anyPresent) {
-        steps.push({ key: o.key, roles, hasAlive: anyAlive });
+        steps.push({ key: o.key, roles: o.roles, hasAlive: anyAlive });
       }
     }
     return steps;
@@ -188,7 +189,8 @@ export class Game {
   actSeer(targetSeat) {
     const t = this.getPlayer(targetSeat);
     if (!t || !t.alive) return { ok: false, error: '查驗目標無效。' };
-    const result = isWolf(t.roleId) ? 'wolf' : 'good';
+    // 隱狼查驗為好人
+    const result = checksAsWolf(t.roleId) ? 'wolf' : 'good';
     this.night.seerTarget = targetSeat;
     this.night.seerResult = result;
     return { ok: true, result, seat: targetSeat, name: t.name };
@@ -210,6 +212,14 @@ export class Game {
         wolfKillEffective = true;
       } else if (savedByGuard || savedByWitch) {
         wolfKillEffective = false;
+      }
+    }
+    // 長老：第一次被狼刀可扛過（毒、投票不適用）
+    if (wolfKillEffective) {
+      const target = this.getPlayer(killed);
+      if (target && ROLES[target.roleId] && ROLES[target.roleId].toughSkin && !target.toughUsed) {
+        target.toughUsed = true;
+        wolfKillEffective = false; // 擋下這一刀
       }
     }
     if (wolfKillEffective) {
@@ -247,12 +257,13 @@ export class Game {
     return { deaths };
   }
 
-  // 找出可開槍的死者（獵人、狼王；被毒不可開槍）
+  // 找出可開槍的死者（具 gunOnDeath 的角色；被毒不可開槍）
+  // 白狼王不在此列：只能在白天自爆帶人，死亡不開槍。
   _findGunner(deadSeats) {
     for (const seat of deadSeats) {
       const p = this.getPlayer(seat);
       if (!p) continue;
-      const canGun = (p.roleId === 'hunter' || p.roleId === 'wolfking');
+      const canGun = ROLES[p.roleId] && ROLES[p.roleId].gunOnDeath;
       if (canGun && p.deadReason !== 'poison') {
         return { seat, roleId: p.roleId };
       }
@@ -277,6 +288,53 @@ export class Game {
     this.history.push({ day: this.day, type: 'gun', shooter: shooterSeat, target: targetSeat });
     this.pendingGun = this._findGunner([targetSeat]); // 連鎖開槍
     return { ok: true, target: targetSeat };
+  }
+
+  // ── 白天主動技能 ──────────────────────────
+  // 騎士決鬥：對方是狼 → 對方死、直接進入黑夜（skipVote）；對方是好人 → 騎士死、繼續投票
+  knightDuel(knightSeat, targetSeat) {
+    const k = this.getPlayer(knightSeat);
+    if (!k || !k.alive || k.roleId !== 'knight') return { ok: false, error: '騎士無效。' };
+    const t = this.getPlayer(targetSeat);
+    if (!t || !t.alive) return { ok: false, error: '決鬥目標無效。' };
+    const targetIsWolf = isWolf(t.roleId);
+    if (targetIsWolf) {
+      t.alive = false;
+      t.deadReason = 'duel';
+      t.deadDay = this.day;
+      this.history.push({ day: this.day, type: 'duel', knight: knightSeat, target: targetSeat, result: 'wolf' });
+      this.pendingGun = this._findGunner([targetSeat]);
+      return { ok: true, targetIsWolf: true, skipVote: true, deadSeat: targetSeat };
+    } else {
+      k.alive = false;
+      k.deadReason = 'duel';
+      k.deadDay = this.day;
+      this.history.push({ day: this.day, type: 'duel', knight: knightSeat, target: targetSeat, result: 'good' });
+      this.pendingGun = null; // 騎士無開槍
+      return { ok: true, targetIsWolf: false, skipVote: false, deadSeat: knightSeat };
+    }
+  }
+
+  // 白狼王自爆：自己死亡並可帶走一名玩家，之後直接進入黑夜
+  selfDestruct(seat, targetSeat) {
+    const p = this.getPlayer(seat);
+    if (!p || !p.alive || p.roleId !== 'whitewolfking') return { ok: false, error: '白狼王無效。' };
+    p.alive = false;
+    p.deadReason = 'boom';
+    p.deadDay = this.day;
+    let took = null;
+    if (targetSeat != null) {
+      const t = this.getPlayer(targetSeat);
+      if (!t || !t.alive) return { ok: false, error: '帶走目標無效。' };
+      t.alive = false;
+      t.deadReason = 'boom';
+      t.deadDay = this.day;
+      took = targetSeat;
+    }
+    this.history.push({ day: this.day, type: 'boom', seat, target: took });
+    // 自爆帶走的人若為獵人/狼王仍可開槍
+    this.pendingGun = took != null ? this._findGunner([took]) : null;
+    return { ok: true, took, skipVote: true };
   }
 
   // ── 白天投票 ──────────────────────────────
